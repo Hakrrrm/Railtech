@@ -12,6 +12,7 @@ firmware/
   src/              pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
   test/             plain-C, assert-based host test programs, one per module
   config.example.h  documents every config.h field (WiFi, MQTT, LRV id); copy to config.h (gitignored)
+  pins_board.h      modem UART/power/GNSS pin assignments, cited to LilyGo's own reference repo
   harness_stage3/   target-only sketches, starting with the Stage 3 Wi-Fi hotspot harness
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
@@ -20,10 +21,10 @@ platformio.ini      PlatformIO project config
 run_tests.sh        builds and runs the full host test suite; keep green at all times
 ```
 
-`pins_board.h` (SPI/I2C/UART pin assignments, cited to the LILYGO schematic)
-lands with the first stage that actually wires something up (Stage 6 SD,
-Stage 7 modem) -- Stage 3 only uses the ESP32-S3's on-chip Wi-Fi, no
-external pins.
+`firmware/pins_board.h` isn't used by anything in Stage 3 (Wi-Fi only,
+no external wiring) -- it's committed early because verified pin data
+became available (LilyGo's own reference example for this exact board
+variant), ahead of Stage 5/7 which will actually consume it.
 
 ## Running tests
 
