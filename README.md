@@ -9,19 +9,29 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 
 ```
 firmware/
-  src/     pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
-  test/    plain-C, assert-based host test programs, one per module
-run_tests.sh   builds and runs the full host test suite; keep green at all times
+  src/              pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
+  test/             plain-C, assert-based host test programs, one per module
+  config.example.h  documents every config.h field (WiFi, MQTT, LRV id); copy to config.h (gitignored)
+  harness_stage3/   target-only sketches, starting with the Stage 3 Wi-Fi hotspot harness
+platformio.ini      PlatformIO project config
+run_tests.sh        builds and runs the full host test suite; keep green at all times
 ```
 
-PlatformIO project files (`platformio.ini`, target-only sketches, `pins_board.h`,
-`config.example.h`) land with Stage 3, the first stage that runs on the device.
+`pins_board.h` (SPI/I2C/UART pin assignments, cited to the LILYGO schematic)
+lands with the first stage that actually wires something up (Stage 6 SD,
+Stage 7 modem) -- Stage 3 only uses the ESP32-S3's on-chip Wi-Fi, no
+external pins.
 
 ## Running tests
 
 ```
 ./run_tests.sh
 ```
+
+Host tests cover the pure-logic modules only. The target build
+(`pio run -e stage3-wifi-hotspot`) additionally needs `firmware/config.h`
+(copy from `firmware/config.example.h`) and PlatformIO's ESP32 platform
+package, which requires network access to PlatformIO's registry.
 
 ## Build stages
 
