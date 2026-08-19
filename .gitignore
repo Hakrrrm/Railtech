@@ -2,6 +2,9 @@
 firmware/config.h
 ingest/.env
 
+# Ingest bridge dead-letter log (local runtime artifact)
+ingest/dead_letter.ndjson
+
 # PlatformIO
 .pio/
 .pioenvs/
