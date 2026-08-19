@@ -17,4 +17,8 @@ gcc $CFLAGS -I firmware/src \
 "$BUILD_DIR/test_serializer"
 
 echo
+echo "== tools/test_track_pipeline =="
+python3 tools/test_track_pipeline.py
+
+echo
 echo "run_tests.sh: all suites passed"
