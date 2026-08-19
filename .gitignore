@@ -1,0 +1,20 @@
+# Device / bridge secrets -- never commit
+firmware/config.h
+ingest/.env
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+
+# Editor / OS
+.DS_Store
+*.swp
