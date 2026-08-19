@@ -11,7 +11,10 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 firmware/
   src/     pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
   test/    plain-C, assert-based host test programs, one per module
-run_tests.sh   builds and runs the full host test suite; keep green at all times
+tools/
+  track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
+  test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
+run_tests.sh               builds and runs the full host test suite; keep green at all times
 ```
 
 PlatformIO project files (`platformio.ini`, target-only sketches, `pins_board.h`,
@@ -22,6 +25,25 @@ PlatformIO project files (`platformio.ini`, target-only sketches, `pins_board.h`
 ```
 ./run_tests.sh
 ```
+
+## Regenerating the track dataset
+
+Whenever `track.geojson` or `loop_lengths.csv` changes, regenerate
+`segments.csv` and `track_data.h` -- a stale header is the silent failure
+mode the build plan calls out (Sec 10):
+
+```
+python3 tools/track_pipeline.py \
+    --geojson track.geojson \
+    --loop-lengths loop_lengths.csv \
+    --out-dir firmware/src/ \
+    [--loop-name NAME]   # required only for Option B (raw/unsegmented trace) input
+```
+
+The pipeline fails loudly (non-zero exit, specific `ERROR:` message naming
+the offending seg_id/coordinates) on every dataset rule violation in Build
+Plan Sec 4.2 -- see `tools/test_track_pipeline.py` for one worked example
+of each.
 
 ## Build stages
 
