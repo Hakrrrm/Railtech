@@ -8,11 +8,17 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 ## Repository layout
 
 ```
+firmware/
+  src/     pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
+  test/    plain-C, assert-based host test programs, one per module
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
 run_tests.sh               builds and runs the full host test suite; keep green at all times
 ```
+
+PlatformIO project files (`platformio.ini`, target-only sketches, `pins_board.h`,
+`config.example.h`) land with Stage 3, the first stage that runs on the device.
 
 ## Running tests
 

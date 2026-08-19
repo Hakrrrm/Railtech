@@ -4,6 +4,19 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+CFLAGS="-std=c11 -Wall -Wextra -Werror -DSEQ_STORE_HOST_STUB"
+BUILD_DIR="$(mktemp -d)"
+trap 'rm -rf "$BUILD_DIR"' EXIT
+
+echo "== firmware/test/test_serializer =="
+gcc $CFLAGS -I firmware/src \
+    -o "$BUILD_DIR/test_serializer" \
+    firmware/test/test_serializer.c \
+    firmware/src/event_serializer.c \
+    firmware/src/seq_store.c
+"$BUILD_DIR/test_serializer"
+
+echo
 echo "== tools/test_track_pipeline =="
 python3 tools/test_track_pipeline.py
 
