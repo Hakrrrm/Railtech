@@ -9,22 +9,33 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 
 ```
 firmware/
-  src/     pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
-  test/    plain-C, assert-based host test programs, one per module
+  src/              pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
+  test/             plain-C, assert-based host test programs, one per module
+  config.example.h  documents every config.h field (WiFi, MQTT, LRV id); copy to config.h (gitignored)
+  pins_board.h      modem UART/power/GNSS pin assignments, cited to LilyGo's own reference repo
+  harness_stage3/   target-only sketches, starting with the Stage 3 Wi-Fi hotspot harness
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
-run_tests.sh               builds and runs the full host test suite; keep green at all times
+platformio.ini      PlatformIO project config
+run_tests.sh        builds and runs the full host test suite; keep green at all times
 ```
 
-PlatformIO project files (`platformio.ini`, target-only sketches, `pins_board.h`,
-`config.example.h`) land with Stage 3, the first stage that runs on the device.
+`firmware/pins_board.h` isn't used by anything in Stage 3 (Wi-Fi only,
+no external wiring) -- it's committed early because verified pin data
+became available (LilyGo's own reference example for this exact board
+variant), ahead of Stage 5/7 which will actually consume it.
 
 ## Running tests
 
 ```
 ./run_tests.sh
 ```
+
+Host tests cover the pure-logic modules only. The target build
+(`pio run -e stage3-wifi-hotspot`) additionally needs `firmware/config.h`
+(copy from `firmware/config.example.h`) and PlatformIO's ESP32 platform
+package, which requires network access to PlatformIO's registry.
 
 ## Regenerating the track dataset
 
