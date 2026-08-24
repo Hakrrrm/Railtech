@@ -316,7 +316,15 @@ static void handle_seg_done(const SegDoneMsg &m)
 void setup()
 {
     Serial.begin(115200);
-    delay(200);
+    /* Native USB-CDC serial re-enumerates on reset/power-cycle -- wait
+     * for a monitor to actually attach so early boot lines aren't lost.
+     * Bounded so the device still boots fine with no monitor connected
+     * (see the Stage 6 harness for the fuller explanation). */
+    unsigned long serial_wait_start = millis();
+    while (!Serial && millis() - serial_wait_start < 3000) {
+        delay(10);
+    }
+    delay(100);
 
     seq_store_init();
     Serial.print("[boot] resumed seq=");
