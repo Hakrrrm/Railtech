@@ -9,17 +9,19 @@
  * build's harness issues the AT command and reads the raw response,
  * then hands the text here.
  *
- * Field layout and the "SIM7670G returns decimal degrees directly, not
- * NMEA ddmm.mmmm" behaviour are taken from a working reference sketch
- * for this exact board/modem (GpsOptimisation.ino), not from SIMCOM's
- * generic AT command manual -- flagged since some SIM76xx variants/
- * firmware report ddmm.mmmm instead.
+ * Field layout confirmed against SIMCOM's own SIM767XX Series_AT
+ * Command Manual_V1.06, Sec 21.2.21: 18 fields --
+ * mode,GPS-SVs,GLONASS-SVs,GALILEO-SVs,BEIDOU-SVs,lat,N/S,lon,E/W,
+ * date,UTC-time,alt,speed,course,PDOP,HDOP,VDOP,NoSV. Decimal-degree
+ * lat/lon (not NMEA ddmm.mmmm) is also manual-confirmed for this
+ * command -- some SIM76xx variants/firmware report ddmm.mmmm for
+ * other GNSS commands, but not this one.
  */
 
 typedef struct {
     int         valid;      /* 1 if fix_mode indicates a usable fix, else 0 */
-    uint8_t     fix_mode;   /* raw +CGNSSINFO fix mode field */
-    uint8_t     nsv;        /* satellites used, summed across GPS+BDS+GLONASS+Galileo */
+    uint8_t     fix_mode;   /* raw +CGNSSINFO fix mode field: 2=2D fix, 3=3D fix per the manual */
+    uint8_t     nsv;        /* NoSV field -- satellites involved in positioning, modem-computed total */
     int16_t     hdop_x10;   /* HDOP, actual value x10 */
     int32_t     lat_e7;     /* latitude,  degrees x 1e7 */
     int32_t     lon_e7;     /* longitude, degrees x 1e7 */

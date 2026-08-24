@@ -6,12 +6,13 @@
 
 #define GNSS_PARSE_BUF_MAX 320
 #define GNSS_PARSE_MAX_FIELDS 20
-/* Reference sketch requires fieldCount >= 16 but then reads index 16
- * (vdop) unguarded -- an off-by-one that's silently harmless in Arduino
- * (empty String -> toFloat() == 0) but would be an out-of-bounds read
- * here. Fixed: require >= 17 fields (indices 0..16) before touching
- * vdop at index 16. */
-#define GNSS_PARSE_MIN_FIELDS 17
+/* +CGNSSINFO always has 18 comma-separated fields per the official AT
+ * command manual (SIM767XX Series_AT Command Manual_V1.06, Sec
+ * 21.2.21): mode, GPS-SVs, GLONASS-SVs, GALILEO-SVs, BEIDOU-SVs, lat,
+ * N/S, lon, E/W, date, UTC-time, alt, speed, course, PDOP, HDOP, VDOP,
+ * NoSV (indices 0..17) -- all empty on an unfixed response, never
+ * fewer fields. Require all 18 before touching index 17 (NoSV). */
+#define GNSS_PARSE_MIN_FIELDS 18
 
 static double round_half_up(double v)
 {
@@ -104,16 +105,24 @@ int gnss_parse_cgnssinfo(const char *raw, gnss_fix_t *out)
     }
 
     out->fix_mode = (uint8_t)atoi(fields[0]);
-    int gps_sv = atoi(fields[1]);
-    int bd_sv = atoi(fields[2]);
-    int glonass_sv = atoi(fields[3]);
-    int galileo_sv = atoi(fields[4]);
-    int total_sv = gps_sv + bd_sv + glonass_sv + galileo_sv;
-    out->nsv = (total_sv < 0) ? 0 : (uint8_t)((total_sv > 255) ? 255 : total_sv);
 
-    /* Reference sketch's own empirically-tested criterion for this
-     * board/modem; fixMode 0 means "no fix", 1/2/3 all treated as usable. */
-    out->valid = (out->fix_mode == 1 || out->fix_mode == 2 || out->fix_mode == 3) ? 1 : 0;
+    /* fields[17] is NoSV, "number of satellites involved in
+     * positioning" per the manual -- the modem already totals this
+     * across GPS/GLONASS/GALILEO/BEIDOU (fields[1..4], in that order),
+     * so there's no need to sum the four per-constellation counts
+     * ourselves (an earlier version of this parser did, based on a
+     * field-order guess from a reference sketch that turned out not to
+     * match the manual's actual GPS/GLONASS/GALILEO/BEIDOU order --
+     * harmless for a summed total, but NoSV is simpler and authoritative). */
+    int nsv = atoi(fields[17]);
+    out->nsv = (nsv < 0) ? 0 : (uint8_t)((nsv > 255) ? 255 : nsv);
+
+    /* Per the manual, <mode> is only ever defined as 2 (2D fix) or 3
+     * (3D fix) on a successful fix. An unfixed response comes back with
+     * every field empty (the manual's own documented example:
+     * "+CGNSSINFO:,,,,,,,,,,,,,,,,,"), and atoi("") == 0, which fails
+     * this check correctly without any special-casing. */
+    out->valid = (out->fix_mode == 2 || out->fix_mode == 3) ? 1 : 0;
     if (!out->valid) {
         return 0;
     }

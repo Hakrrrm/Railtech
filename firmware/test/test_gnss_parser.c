@@ -10,21 +10,31 @@
 
 static void test_valid_fix_parses(void)
 {
-    /* Representative +CGNSSINFO line: fixMode=2, 8 GPS + 0 BDS + 3 GLONASS
-     * + 1 Galileo sats, decimal-degree lat/lon (matches this board's
-     * modem behaviour per the reference sketch), date/time, alt, speed
-     * (knots), course, pdop, hdop, vdop. */
+    /* Representative +CGNSSINFO line, 18 fields per the AT command
+     * manual: mode,GPS,GLONASS,GALILEO,BEIDOU,lat,N/S,lon,E/W,date,
+     * time,alt,speed,course,PDOP,HDOP,VDOP,NoSV.
+     *
+     * lat/lon are entered here as plain decimal degrees, per the
+     * working reference sketch's own empirical observation on this
+     * exact modem -- NOTE: the AT manual's own printed example for this
+     * command shows values that look like NMEA ddmm.mmmm instead
+     * (e.g. "3113.330650" for a latitude, not "31.133065"), which would
+     * contradict this. Trusting the hands-on hardware observation over
+     * a possibly-stale manual example, but this is exactly the kind of
+     * thing to sanity-check against a known real location the first
+     * time gnss_raw.ndjson has a real fix -- if lat_e7/lon_e7 come out
+     * wildly wrong, this is the first place to look. */
     const char *raw =
         "AT+CGNSSINFO\r\n"
         "+CGNSSINFO: 2,8,0,3,1,1.293700,N,103.855800,E,240826,123456.0,"
-        "15.2,4.32,180.0,1.8,1.4,1.1\r\n"
+        "15.2,4.32,180.0,1.8,1.4,1.1,12\r\n"
         "\r\nOK\r\n";
 
     gnss_fix_t fix;
     assert(gnss_parse_cgnssinfo(raw, &fix) == 0);
     assert(fix.valid == 1);
     assert(fix.fix_mode == 2);
-    assert(fix.nsv == 8 + 0 + 3 + 1);
+    assert(fix.nsv == 12);
     assert(fix.lat_e7 == 12937000);
     assert(fix.lon_e7 == 1038558000);
     assert(fix.hdop_x10 == 14);
@@ -39,7 +49,7 @@ static void test_southern_western_hemisphere_signs(void)
 {
     const char *raw =
         "+CGNSSINFO: 3,10,0,0,0,33.868800,S,151.209300,W,240826,010203.0,"
-        "5.0,0.00,0.0,1.0,0.9,0.8\r\n\r\nOK\r\n";
+        "5.0,0.00,0.0,1.0,0.9,0.8,10\r\n\r\nOK\r\n";
 
     gnss_fix_t fix;
     assert(gnss_parse_cgnssinfo(raw, &fix) == 0);
@@ -51,7 +61,8 @@ static void test_southern_western_hemisphere_signs(void)
 
 static void test_no_fix_yet_parses_but_invalid(void)
 {
-    const char *raw = "+CGNSSINFO: 0,0,0,0,0,,,,,,,,,,,,,\r\n\r\nOK\r\n";
+    /* The manual's own documented "no fix" example: every field empty. */
+    const char *raw = "+CGNSSINFO:,,,,,,,,,,,,,,,,,\r\n\r\nOK\r\n";
     gnss_fix_t fix;
     assert(gnss_parse_cgnssinfo(raw, &fix) == 0);
     assert(fix.valid == 0);
@@ -69,7 +80,7 @@ static void test_missing_marker_rejected(void)
 
 static void test_truncated_line_rejected(void)
 {
-    /* Only 5 fields -- nowhere near the 17 required. */
+    /* Only 5 fields -- nowhere near the 18 required. */
     const char *raw = "+CGNSSINFO: 2,8,0,3,1\r\n\r\nOK\r\n";
     gnss_fix_t fix;
     assert(gnss_parse_cgnssinfo(raw, &fix) == -1);
