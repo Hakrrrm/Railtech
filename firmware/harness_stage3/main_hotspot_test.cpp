@@ -30,7 +30,7 @@ extern "C" {
 #include "seq_store.h"
 }
 
-#include "config.h"
+#include "../config.h"
 
 /* ---- fake matcher -> net task queue message ---------------------- */
 
