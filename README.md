@@ -15,7 +15,8 @@ firmware/
   pins_board.h      modem UART/power/GNSS pin assignments, cited to LilyGo's own reference repo,
                      plus the confirmed SD card SPI pins (Stage 6)
   harness_stage3/   target-only sketches: the Stage 3 Wi-Fi hotspot harness, now also doing
-                     Stage 6 SD store-and-forward logging (a fresh /boot_NNNN/ folder per boot)
+                     Stage 6 SD store-and-forward logging (one running /lrv_log/events.ndjson,
+                     appended to across every boot)
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)

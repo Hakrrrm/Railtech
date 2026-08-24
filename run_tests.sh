@@ -17,14 +17,6 @@ gcc $CFLAGS -I firmware/src \
 "$BUILD_DIR/test_serializer"
 
 echo
-echo "== firmware/test/test_boot_counter =="
-gcc $CFLAGS -I firmware/src \
-    -o "$BUILD_DIR/test_boot_counter" \
-    firmware/test/test_boot_counter.c \
-    firmware/src/boot_counter.c
-"$BUILD_DIR/test_boot_counter"
-
-echo
 echo "== tools/test_track_pipeline =="
 python3 tools/test_track_pipeline.py
 
