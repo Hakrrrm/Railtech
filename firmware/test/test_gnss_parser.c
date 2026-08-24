@@ -70,6 +70,22 @@ static void test_no_fix_yet_parses_but_invalid(void)
     printf("[ok] no-fix-yet response parses successfully with valid=0\n");
 }
 
+static void test_real_hardware_truncated_no_fix_response(void)
+{
+    /* What SIM7670G-MNGV firmware V1.9.05 actually sends for "no fix
+     * yet" -- only 9 empty fields, not the manual's documented 18.
+     * Captured verbatim off real hardware. Must not be rejected as
+     * malformed just because it's short: fix_mode is empty (-> 0),
+     * which is enough on its own to classify "no fix" without needing
+     * the rest of the line. */
+    const char *raw = "+CGNSSINFO: ,,,,,,,,\r\n\r\nOK\r\n";
+    gnss_fix_t fix;
+    assert(gnss_parse_cgnssinfo(raw, &fix) == 0);
+    assert(fix.valid == 0);
+    assert(fix.fix_mode == 0);
+    printf("[ok] real hardware's truncated (9-field) no-fix response parses, not rejected\n");
+}
+
 static void test_missing_marker_rejected(void)
 {
     const char *raw = "OK\r\n";
@@ -100,6 +116,7 @@ int main(void)
     test_valid_fix_parses();
     test_southern_western_hemisphere_signs();
     test_no_fix_yet_parses_but_invalid();
+    test_real_hardware_truncated_no_fix_response();
     test_missing_marker_rejected();
     test_truncated_line_rejected();
     test_null_args_rejected();

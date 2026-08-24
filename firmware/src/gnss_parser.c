@@ -6,12 +6,16 @@
 
 #define GNSS_PARSE_BUF_MAX 320
 #define GNSS_PARSE_MAX_FIELDS 20
-/* +CGNSSINFO always has 18 comma-separated fields per the official AT
+/* A genuine fix has 18 comma-separated fields per the official AT
  * command manual (SIM767XX Series_AT Command Manual_V1.06, Sec
  * 21.2.21): mode, GPS-SVs, GLONASS-SVs, GALILEO-SVs, BEIDOU-SVs, lat,
  * N/S, lon, E/W, date, UTC-time, alt, speed, course, PDOP, HDOP, VDOP,
- * NoSV (indices 0..17) -- all empty on an unfixed response, never
- * fewer fields. Require all 18 before touching index 17 (NoSV). */
+ * NoSV (indices 0..17). This minimum is enforced ONLY once fix_mode
+ * (fields[0]) has already confirmed a real fix (2 or 3) -- real
+ * hardware (SIM7670G-MNGV firmware V1.9.05) truncates the "no fix yet"
+ * response to far fewer fields than the manual's own documented
+ * example shows, so requiring 18 unconditionally rejects every no-fix
+ * tick as malformed. See gnss_parse_cgnssinfo()'s own comment. */
 #define GNSS_PARSE_MIN_FIELDS 18
 
 static double round_half_up(double v)
@@ -100,11 +104,31 @@ int gnss_parse_cgnssinfo(const char *raw, gnss_fix_t *out)
         fields[field_count++] = cursor;
     }
 
-    if (field_count < GNSS_PARSE_MIN_FIELDS) {
+    if (field_count < 1) {
         return -1;
     }
 
     out->fix_mode = (uint8_t)atoi(fields[0]);
+
+    /* Per the manual, <mode> is only ever defined as 2 (2D fix) or 3
+     * (3D fix) on a successful fix -- checked, and short-circuited on,
+     * before requiring the full field count below. This matters because
+     * real hardware (SIM7670G-MNGV firmware V1.9.05) does NOT match the
+     * manual's own documented "no fix" example (which shows all 18
+     * fields present but empty, "+CGNSSINFO:,,,,,,,,,,,,,,,,,"): the
+     * real modem instead truncates the line to just 9 empty fields
+     * ("+CGNSSINFO: ,,,,,,,,") when there's no fix yet. Confirmed on
+     * actual hardware, not a hypothetical. Requiring 18 fields
+     * unconditionally (an earlier version of this parser did) rejected
+     * every single "no fix yet" tick as malformed. */
+    out->valid = (out->fix_mode == 2 || out->fix_mode == 3) ? 1 : 0;
+    if (!out->valid) {
+        return 0;
+    }
+
+    if (field_count < GNSS_PARSE_MIN_FIELDS) {
+        return -1; /* fix_mode claimed a real fix but the rest of the line is truncated */
+    }
 
     /* fields[17] is NoSV, "number of satellites involved in
      * positioning" per the manual -- the modem already totals this
@@ -116,16 +140,6 @@ int gnss_parse_cgnssinfo(const char *raw, gnss_fix_t *out)
      * harmless for a summed total, but NoSV is simpler and authoritative). */
     int nsv = atoi(fields[17]);
     out->nsv = (nsv < 0) ? 0 : (uint8_t)((nsv > 255) ? 255 : nsv);
-
-    /* Per the manual, <mode> is only ever defined as 2 (2D fix) or 3
-     * (3D fix) on a successful fix. An unfixed response comes back with
-     * every field empty (the manual's own documented example:
-     * "+CGNSSINFO:,,,,,,,,,,,,,,,,,"), and atoi("") == 0, which fails
-     * this check correctly without any special-casing. */
-    out->valid = (out->fix_mode == 2 || out->fix_mode == 3) ? 1 : 0;
-    if (!out->valid) {
-        return 0;
-    }
 
     double lat_raw = strtod(fields[5], NULL);
     char ns = fields[6][0];
