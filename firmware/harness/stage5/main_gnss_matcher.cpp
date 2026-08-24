@@ -5,17 +5,24 @@
  * Serial + SD only in this harness -- no Wi-Fi/MQTT. Deferred per
  * explicit user instruction until a SIM card is available to test
  * cellular + MQTT together (Stage 7). Reuses Stage 6's SD
- * store-and-forward pattern (fresh /boot_NNNN/ folder per boot).
+ * store-and-forward pattern: one fixed /lrv_log/ directory, appended
+ * to across every boot (not a fresh folder per boot -- that was an
+ * earlier design, dropped after it grew unboundedly across routine
+ * test resets with no benefit).
  *
  * Core 0: gnss_matcher_task -- once per second: if IMU_ENABLED and the
  *         IMU classifies the vehicle stationary, skip the GNSS poll
  *         entirely (saves modem cycles/power); otherwise issue a raw
  *         AT+CGNSSINFO query (direct AT command, not TinyGSM's parsed
  *         GPS helpers -- explicit user request), parse it, and feed the
- *         fix into the map matcher. A completed segment goes on the
- *         queue for Core 1.
+ *         fix into the map matcher. Every valid fix is printed/logged
+ *         to gnss_raw.ndjson on its own -- independent of the matcher --
+ *         so GNSS acquisition can be verified before trusting matcher
+ *         output. A completed segment additionally goes on the queue
+ *         for Core 1.
  * Core 1 (Arduino loop()): commit-before-publish (seq_store), Serial +
- *         SD logging, queue draining. No network I/O.
+ *         SD logging of completed segments (events.ndjson), queue
+ *         draining. No network I/O.
  *
  * Modem/GPS bring-up (PWRKEY pulse, DTR, power-save pin, setGPSMode,
  * enableGPS) is ported from the team's own working reference sketch
@@ -80,23 +87,45 @@ static QueueHandle_t s_matcher_queue;
 /* ---- SD card store-and-forward (Stage 6 pattern, reused) -----------
  * One fixed directory/file, appended to across every boot -- see the
  * Stage 3/6 harness for why this replaced an earlier per-boot-folder
- * design. */
-#define SD_LOG_DIR  "/lrv_log"
-#define SD_LOG_FILE SD_LOG_DIR "/events.ndjson"
+ * design.
+ *
+ * gnss_raw.ndjson (Stage 5): every valid GNSS fix, independent of
+ * whether the map matcher fires a SEG_DONE -- lets you confirm GNSS
+ * acquisition is healthy before trusting/debugging the matcher, since
+ * events.ndjson alone stays silent until you're actually on a real
+ * track crossing a segment boundary. Written at up to 1 Hz, noticeably
+ * more SD I/O than events.ndjson's one-write-per-completed-segment;
+ * acceptable for a bring-up/debug harness, flagged in case flash wear
+ * matters once this runs for hours unattended. */
+#define SD_LOG_DIR      "/lrv_log"
+#define SD_LOG_FILE     SD_LOG_DIR "/events.ndjson"
+#define SD_RAW_LOG_FILE SD_LOG_DIR "/gnss_raw.ndjson"
 static bool s_sd_ready = false;
 
-static void sd_log_json(const char *json)
+static void sd_append_line(const char *path, const char *json)
 {
     if (!s_sd_ready) {
         return;
     }
-    File f = SD.open(SD_LOG_FILE, FILE_APPEND);
+    File f = SD.open(path, FILE_APPEND);
     if (!f) {
-        Serial.println("[sd FAIL] could not open events.ndjson for append -- continuing without SD log");
+        Serial.print("[sd FAIL] could not open ");
+        Serial.print(path);
+        Serial.println(" for append -- continuing without SD log");
         return;
     }
     f.println(json);
     f.close();
+}
+
+static void sd_log_json(const char *json)
+{
+    sd_append_line(SD_LOG_FILE, json);
+}
+
+static void sd_log_raw_json(const char *json)
+{
+    sd_append_line(SD_RAW_LOG_FILE, json);
 }
 
 static void sd_init_log_dir()
@@ -242,16 +271,36 @@ static void gnss_matcher_task(void *arg)
 
         String raw;
         if (!raw_gnss_query(raw)) {
-            continue; /* AT+CGNSSINFO timed out/errored this tick -- try again next tick */
+            Serial.println("[gnss] AT+CGNSSINFO timed out/errored, retrying next tick");
+            continue;
         }
 
         gnss_fix_t fix;
-        if (gnss_parse_cgnssinfo(raw.c_str(), &fix) != 0 || !fix.valid) {
-            continue; /* malformed response or no fix yet */
+        int parse_rc = gnss_parse_cgnssinfo(raw.c_str(), &fix);
+        if (parse_rc != 0) {
+            Serial.println("[gnss] AT+CGNSSINFO response did not parse (malformed/truncated)");
+            continue;
+        }
+        if (!fix.valid) {
+            Serial.printf("[gnss] no fix yet (fixMode=%u, nsv=%u)\n",
+                           (unsigned)fix.fix_mode, (unsigned)fix.nsv);
+            continue;
         }
 
-        map_matcher_event_t ev;
+        /* Log/print every valid fix -- independent of whether it moves the
+         * matcher -- so GNSS acquisition health is visible/verifiable on
+         * its own, before trusting the matcher's SEG_DONE output. */
         uint32_t now_s = (fix.utc_epoch_s != 0) ? fix.utc_epoch_s : (uint32_t)(millis() / 1000);
+        char raw_json[160];
+        snprintf(raw_json, sizeof(raw_json),
+            "{\"v\":1,\"ev\":\"GNSS_RAW\",\"t\":%lu,\"lat_e7\":%ld,\"lon_e7\":%ld,"
+            "\"hdop_x10\":%d,\"nsv\":%u,\"speed_mmps\":%lu}",
+            (unsigned long)now_s, (long)fix.lat_e7, (long)fix.lon_e7,
+            (int)fix.hdop_x10, (unsigned)fix.nsv, (unsigned long)fix.speed_mmps);
+        Serial.println(raw_json);
+        sd_log_raw_json(raw_json);
+
+        map_matcher_event_t ev;
         int fired = map_matcher_update(&matcher_st, TRACK_SEGMENTS, TRACK_NUM_SEGMENTS,
                                         &TRACK_NEXT_FWD[0][0], TRACK_NEXT_FWD_COUNT,
                                         fix.lat_e7, fix.lon_e7, now_s, &ev);
