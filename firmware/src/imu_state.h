@@ -12,11 +12,19 @@
  * gravity is irrelevant to cancel out since we only need variation, not
  * orientation) over a rolling window; if that range stays under a
  * threshold for the whole window, the vehicle is stationary. Simple on
- * purpose -- an MVP gate for "should we even bother polling GNSS this
- * tick", not a ride-quality or vibration analysis.
+ * purpose -- state recognition (is the vehicle moving right now), not a
+ * ride-quality or vibration analysis. The caller decides the sample
+ * rate this gets fed at -- see IMU_STATE_WINDOW_SAMPLES below for the
+ * Stage 5 harness's choice, which also happens to gate GNSS polling.
  */
 
-#define IMU_STATE_WINDOW_SAMPLES 8      /* ~8 s at 1 sample/s */
+/* Window length is caller's choice of sample rate x desired decision
+ * window; the constant here just needs enough samples to smooth out
+ * single-sample noise without lagging state changes too much. At the
+ * Stage 5 harness's 20 Hz IMU sampling (decoupled from GNSS's 1 Hz),
+ * 30 samples is a 1.5 s window: long enough to reject a stray vibration
+ * spike, short enough that a real motion onset shows up promptly. */
+#define IMU_STATE_WINDOW_SAMPLES 30
 #define IMU_STATE_STILL_THRESHOLD_MG 60 /* accel magnitude range, milli-g */
 
 typedef struct {

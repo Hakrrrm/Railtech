@@ -10,16 +10,25 @@
  * earlier design, dropped after it grew unboundedly across routine
  * test resets with no benefit).
  *
- * Core 0: gnss_matcher_task -- once per second: if IMU_ENABLED and the
- *         IMU classifies the vehicle stationary, skip the GNSS poll
- *         entirely (saves modem cycles/power); otherwise issue a raw
- *         AT+CGNSSINFO query (direct AT command, not TinyGSM's parsed
- *         GPS helpers -- explicit user request), parse it, and feed the
- *         fix into the map matcher. Every valid fix is printed/logged
- *         to gnss_raw.ndjson on its own -- independent of the matcher --
- *         so GNSS acquisition can be verified before trusting matcher
- *         output. A completed segment additionally goes on the queue
- *         for Core 1.
+ * Core 0 runs two independent tasks, sampled at different rates on
+ * purpose -- IMU state recognition needs to react within a few hundred
+ * ms, GNSS is inherently a 1 Hz fix:
+ *   - imu_task (IMU_ENABLED only): samples the MPU6050 at 20 Hz
+ *     (IMU_SAMPLE_INTERVAL_MS) and updates a shared stationary/moving
+ *     flag. This used to be piggybacked on gnss_matcher_task's own 1 Hz
+ *     loop -- decoupled so the classifier gets a real decision window
+ *     (imu_state.h's IMU_STATE_WINDOW_SAMPLES) instead of one sample
+ *     per second, which was too coarse to recognise state changes
+ *     promptly or reject vibration noise properly.
+ *   - gnss_matcher_task: once per second, reads that flag -- if
+ *     stationary, skips the GNSS poll entirely (saves modem cycles/
+ *     power); otherwise issues a raw AT+CGNSSINFO query (direct AT
+ *     command, not TinyGSM's parsed GPS helpers -- explicit user
+ *     request), parses it, and feeds the fix into the map matcher.
+ *     Every valid fix is printed/logged to gnss_raw.ndjson on its own
+ *     -- independent of the matcher -- so GNSS acquisition can be
+ *     verified before trusting matcher output. A completed segment
+ *     additionally goes on the queue for Core 1.
  * Core 1 (Arduino loop()): commit-before-publish (seq_store), Serial +
  *         SD logging of completed segments (events.ndjson), queue
  *         draining. No network I/O.
@@ -67,8 +76,15 @@ extern "C" {
 #define SerialAT Serial1
 #define SAMPLE_INTERVAL_MS 1000UL /* 1 Hz, TDD */
 #define RAW_GPS_TIMEOUT_MS 800UL
+#define IMU_SAMPLE_INTERVAL_MS 50UL /* 20 Hz -- decoupled from GNSS's 1 Hz, see imu_task */
 
 TinyGsm modem(SerialAT);
+
+/* Written only by imu_task, read only by gnss_matcher_task -- a single
+ * bool is a single-instruction load/store on this MCU, so `volatile`
+ * (defeats compiler caching across loop iterations) is enough here
+ * without a mutex; not true in general for multi-word shared state. */
+static volatile bool s_imu_stationary = false;
 
 /* ---- Core 0 -> Core 1 queue message -------------------------------- */
 
@@ -229,6 +245,46 @@ static bool raw_gnss_query(String &response)
     return false;
 }
 
+/* ---- Core 0: IMU sampling task (20 Hz, independent of GNSS) -------- */
+
+static void imu_task(void *arg)
+{
+    (void)arg;
+
+#if IMU_ENABLED
+    bool imu_ready = imu_mpu6050_init(QWIIC_I2C_SDA_PIN, QWIIC_I2C_SCL_PIN);
+    if (!imu_ready) {
+        Serial.println("[imu] disabled: MPU6050 init failed (device not connected/ACKing on the Qwiic port?)");
+        vTaskDelete(NULL); /* nothing more for this task to do -- s_imu_stationary stays
+                             * false (moving), so gnss_matcher_task just always polls */
+    }
+
+    imu_state_t imu_st;
+    imu_state_reset(&imu_st);
+    bool was_stationary = false;
+
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(IMU_SAMPLE_INTERVAL_MS));
+
+        int16_t ax, ay, az;
+        if (!imu_mpu6050_read_accel(&ax, &ay, &az)) {
+            continue; /* I2C read glitch this tick -- try again next tick */
+        }
+        bool stationary = imu_state_update(&imu_st, ax, ay, az) != 0;
+        s_imu_stationary = stationary;
+
+        if (stationary != was_stationary) {
+            Serial.println(stationary
+                ? "[imu] stationary -- skipping GNSS polling until motion resumes"
+                : "[imu] motion detected -- resuming GNSS polling");
+            was_stationary = stationary;
+        }
+    }
+#else
+    vTaskDelete(NULL); /* IMU_ENABLED=0 -- s_imu_stationary stays false, GNSS always polls */
+#endif
+}
+
 /* ---- Core 0: GNSS + matcher task ------------------------------------ */
 
 static void gnss_matcher_task(void *arg)
@@ -238,35 +294,11 @@ static void gnss_matcher_task(void *arg)
     map_matcher_state_t matcher_st;
     map_matcher_init(&matcher_st);
 
-    imu_state_t imu_st;
-    imu_state_reset(&imu_st);
-    bool imu_ready = false;
-#if IMU_ENABLED
-    imu_ready = imu_mpu6050_init(QWIIC_I2C_SDA_PIN, QWIIC_I2C_SCL_PIN);
-    if (!imu_ready) {
-        Serial.println("[imu] disabled: MPU6050 init failed (device not connected/ACKing on the Qwiic port?)");
-    }
-#endif
-    bool was_stationary = false;
-
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL_MS));
 
-        bool stationary = false;
-        if (imu_ready) {
-            int16_t ax, ay, az;
-            if (imu_mpu6050_read_accel(&ax, &ay, &az)) {
-                stationary = imu_state_update(&imu_st, ax, ay, az) != 0;
-            }
-        }
-        if (stationary != was_stationary) {
-            Serial.println(stationary
-                ? "[imu] stationary -- skipping GNSS polling until motion resumes"
-                : "[imu] motion detected -- resuming GNSS polling");
-            was_stationary = stationary;
-        }
-        if (stationary) {
-            continue;
+        if (s_imu_stationary) {
+            continue; /* imu_task already logged the stationary/motion transition */
         }
 
         String raw;
@@ -389,6 +421,7 @@ void setup()
 
     s_matcher_queue = xQueueCreate(8, sizeof(SegDoneMsg));
 
+    xTaskCreatePinnedToCore(imu_task, "imu", 4096, nullptr, 1, nullptr, 0 /* Core 0 */);
     xTaskCreatePinnedToCore(gnss_matcher_task, "gnss_matcher", 8192, nullptr, 1, nullptr, 0 /* Core 0 */);
 }
 
