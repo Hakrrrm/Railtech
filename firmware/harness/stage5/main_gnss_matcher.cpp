@@ -309,30 +309,43 @@ static void gnss_bringup()
      * only AT+CGNSSPWR=1 and accepted the immediate OK -- so the
      * antenna was never powered and the GNSS engine's readiness was
      * never actually awaited, producing endless "no fix" with every
-     * command reporting success. Bounded to 3 whole-sequence attempts
-     * (the sketch retries unbounded; each attempt already waits up to
-     * 30 s for READY). */
+     * command reporting success.
+     *
+     * Observed on real hardware (V1.9.05): CGNSSPWR=1 returns OK but no
+     * READY URC within 30 s. Resending it blindly (a previous revision
+     * did, 3x) is counterproductive -- each retry flushes the UART
+     * (discarding a READY in flight) and re-pokes a possibly mid-boot
+     * engine, while stalling polling for up to 90 s. So: one READY
+     * wait, and if it times out, verify state with AT+CGNSSPWR? (read
+     * command, manual Sec 21.2.1) instead of hammering -- "+CGNSSPWR: 1"
+     * means the engine is on regardless of whether we caught the URC,
+     * and CGNSSINFO polling is harmless to start either way. */
     Serial.println("[gnss] powering GNSS antenna rail + engine...");
     char gpio_cmd[32];
-    bool gnss_on = false;
-    for (int attempt = 0; attempt < 3 && !gnss_on; attempt++) {
-        snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGDRT=%u,1", (unsigned)MODEM_GPS_ENABLE_GPIO);
-        send_at_command(gpio_cmd, resp, 2000);
-        snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGSETV=%u,%u",
-                 (unsigned)MODEM_GPS_ENABLE_GPIO, (unsigned)MODEM_GPS_ENABLE_LEVEL);
-        send_at_command(gpio_cmd, resp, 2000);
-
-        gnss_on = send_at_command_expect("AT+CGNSSPWR=1", resp, "+CGNSSPWR: READY!", 30000);
-        if (!gnss_on) {
-            Serial.print("[gnss] no READY yet, retrying, response so far: ");
-            Serial.println(resp);
-            delay(500);
-        }
+    snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGDRT=%u,1", (unsigned)MODEM_GPS_ENABLE_GPIO);
+    if (!send_at_command(gpio_cmd, resp, 2000)) {
+        Serial.print("[gnss] AT+CGDRT failed (antenna rail may be unpowered): ");
+        Serial.println(resp);
     }
+    snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGSETV=%u,%u",
+             (unsigned)MODEM_GPS_ENABLE_GPIO, (unsigned)MODEM_GPS_ENABLE_LEVEL);
+    if (!send_at_command(gpio_cmd, resp, 2000)) {
+        Serial.print("[gnss] AT+CGSETV failed (antenna rail may be unpowered): ");
+        Serial.println(resp);
+    }
+
+    bool gnss_on = send_at_command_expect("AT+CGNSSPWR=1", resp, "+CGNSSPWR: READY!", 30000);
     if (gnss_on) {
         Serial.println("[gnss] enabled (READY).");
     } else {
-        Serial.println("[gnss] never saw +CGNSSPWR: READY! -- continuing, polling will report no fix");
+        Serial.println("[gnss] no READY URC in 30s, checking power state via AT+CGNSSPWR?...");
+        if (send_at_command_expect("AT+CGNSSPWR?", resp, "+CGNSSPWR: 1", 2000)) {
+            Serial.println("[gnss] engine reports powered on -- proceeding (READY URC just wasn't caught).");
+        } else {
+            Serial.print("[gnss] engine reports NOT powered, response: ");
+            Serial.println(resp);
+            Serial.println("[gnss] continuing anyway -- polling will report no fix");
+        }
     }
 
     /* modem.setGPSBaud(115200) in the reference sketch. */
