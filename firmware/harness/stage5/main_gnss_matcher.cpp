@@ -363,7 +363,9 @@ static void gnss_matcher_task(void *arg)
         gnss_fix_t fix;
         int parse_rc = gnss_parse_cgnssinfo(raw.c_str(), &fix);
         if (parse_rc != 0) {
-            Serial.println("[gnss] AT+CGNSSINFO response did not parse (malformed/truncated)");
+            Serial.print("[gnss] AT+CGNSSINFO response did not parse (malformed/truncated), raw: [");
+            Serial.print(raw);
+            Serial.println("]");
             continue;
         }
         if (!fix.valid) {
