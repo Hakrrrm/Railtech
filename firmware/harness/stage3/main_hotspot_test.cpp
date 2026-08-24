@@ -22,11 +22,9 @@
  *     arrives with Stage 7 (TDD Sec 5.11).
  *
  * Stage 6 (SD store-and-forward) is folded into this harness rather than
- * its own: every boot creates a fresh /boot_NNNN/ folder on the SD card
- * (named via boot_counter's NVS-persisted count) and every event is
- * appended to events.ndjson there, published or not -- see the SD block
- * below for why this is broader than the plan doc's "backlog on failure
- * only" wording.
+ * its own: every event is appended to one fixed events.ndjson on the SD
+ * card, published or not -- see the SD block below for why this is
+ * broader than the plan doc's "backlog on failure only" wording.
  */
 #include <Arduino.h>
 #include <WiFi.h>
@@ -37,7 +35,6 @@
 extern "C" {
 #include "event_serializer.h"
 #include "seq_store.h"
-#include "boot_counter.h"
 }
 
 #include "../../config.h"
@@ -65,22 +62,23 @@ static PubSubClient s_mqtt(s_wifi_client);
 static char s_topic_events[64];
 
 /* ---- SD card store-and-forward (Stage 6) --------------------------
- * A fresh /boot_NNNN/ folder is created every boot (reset or power
- * cycle), named from boot_counter's NVS-persisted, ever-incrementing
- * count. Every event -- published or not -- is appended to
- * events.ndjson in that folder as an offline record, per the user's
- * explicit request. This is broader than the Build Plan's Sec 6
- * wording ("backlog only on publish failure"): logging here is
- * unconditional, so the SD card also serves as a full local audit
- * trail, not just a failure backlog. Flagged as an intentional
- * deviation from the plan doc, not an oversight.
+ * One fixed directory/file, appended to across every boot -- earlier
+ * revisions created a fresh /boot_NNNN/ folder per boot, but that grew
+ * unboundedly across routine test resets with no benefit, so it was
+ * dropped in favour of a single running log. Every event -- published
+ * or not -- is appended to events.ndjson, per the user's explicit
+ * request. This is broader than the Build Plan's Sec 6 wording
+ * ("backlog only on publish failure"): logging here is unconditional,
+ * so the SD card also serves as a full local audit trail, not just a
+ * failure backlog. Flagged as an intentional deviation from the plan
+ * doc, not an oversight.
  *
  * SD absent/write-failed must never halt matching or publishing --
  * log loudly once and keep going (Build Plan Sec 6). */
-#define SD_LOG_PATH_MAX 48
+#define SD_LOG_DIR  "/lrv_log"
+#define SD_LOG_FILE SD_LOG_DIR "/events.ndjson"
 
 static bool s_sd_ready = false;
-static char s_sd_log_dir[SD_LOG_PATH_MAX];
 
 /* Cycles through a tiny fake loop so segment IDs in mosquitto_sub look
  * plausible rather than constant. */
@@ -161,10 +159,7 @@ static void sd_log_json(const char *json)
     if (!s_sd_ready) {
         return;
     }
-    char path[SD_LOG_PATH_MAX + 32];
-    snprintf(path, sizeof(path), "%s/events.ndjson", s_sd_log_dir);
-
-    File f = SD.open(path, FILE_APPEND);
+    File f = SD.open(SD_LOG_FILE, FILE_APPEND);
     if (!f) {
         Serial.println("[sd FAIL] could not open events.ndjson for append -- continuing without SD log");
         return;
@@ -173,7 +168,7 @@ static void sd_log_json(const char *json)
     f.close();
 }
 
-static void sd_init_boot_folder()
+static void sd_init_log_dir()
 {
     SPI.begin(SD_SPI_SCLK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
     if (!SD.begin(SD_SPI_CS_PIN)) {
@@ -181,18 +176,13 @@ static void sd_init_boot_folder()
         return;
     }
 
-    uint32_t boot_num = boot_counter_next();
-    snprintf(s_sd_log_dir, sizeof(s_sd_log_dir), "/boot_%04lu", (unsigned long)boot_num);
-
-    if (!SD.mkdir(s_sd_log_dir)) {
-        Serial.print("[sd FAIL] mkdir failed for ");
-        Serial.println(s_sd_log_dir);
+    if (!SD.exists(SD_LOG_DIR) && !SD.mkdir(SD_LOG_DIR)) {
+        Serial.println("[sd FAIL] mkdir failed for " SD_LOG_DIR);
         return;
     }
 
     s_sd_ready = true;
-    Serial.print("[sd] logging to ");
-    Serial.println(s_sd_log_dir);
+    Serial.println("[sd] logging to " SD_LOG_FILE " (appending across boots)");
 }
 
 static void handle_fake_seg_done(const FakeSegDone &fake)
@@ -266,7 +256,7 @@ void setup()
     Serial.print("[boot] resumed seq=");
     Serial.println(seq_store_get_seq());
 
-    sd_init_boot_folder();
+    sd_init_log_dir();
 
     snprintf(s_topic_events, sizeof(s_topic_events), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
 

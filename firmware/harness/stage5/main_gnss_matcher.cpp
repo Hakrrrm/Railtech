@@ -43,7 +43,6 @@
 extern "C" {
 #include "event_serializer.h"
 #include "seq_store.h"
-#include "boot_counter.h"
 #include "gnss_parser.h"
 #include "map_matcher.h"
 #include "imu_state.h"
@@ -78,19 +77,20 @@ struct SegDoneMsg {
 
 static QueueHandle_t s_matcher_queue;
 
-/* ---- SD card store-and-forward (Stage 6 pattern, reused) ----------- */
-#define SD_LOG_PATH_MAX 48
+/* ---- SD card store-and-forward (Stage 6 pattern, reused) -----------
+ * One fixed directory/file, appended to across every boot -- see the
+ * Stage 3/6 harness for why this replaced an earlier per-boot-folder
+ * design. */
+#define SD_LOG_DIR  "/lrv_log"
+#define SD_LOG_FILE SD_LOG_DIR "/events.ndjson"
 static bool s_sd_ready = false;
-static char s_sd_log_dir[SD_LOG_PATH_MAX];
 
 static void sd_log_json(const char *json)
 {
     if (!s_sd_ready) {
         return;
     }
-    char path[SD_LOG_PATH_MAX + 32];
-    snprintf(path, sizeof(path), "%s/events.ndjson", s_sd_log_dir);
-    File f = SD.open(path, FILE_APPEND);
+    File f = SD.open(SD_LOG_FILE, FILE_APPEND);
     if (!f) {
         Serial.println("[sd FAIL] could not open events.ndjson for append -- continuing without SD log");
         return;
@@ -99,23 +99,19 @@ static void sd_log_json(const char *json)
     f.close();
 }
 
-static void sd_init_boot_folder()
+static void sd_init_log_dir()
 {
     SPI.begin(SD_SPI_SCLK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
     if (!SD.begin(SD_SPI_CS_PIN)) {
         Serial.println("[sd FAIL] SD.begin() failed -- card absent or unreadable, continuing without SD logging");
         return;
     }
-    uint32_t boot_num = boot_counter_next();
-    snprintf(s_sd_log_dir, sizeof(s_sd_log_dir), "/boot_%04lu", (unsigned long)boot_num);
-    if (!SD.mkdir(s_sd_log_dir)) {
-        Serial.print("[sd FAIL] mkdir failed for ");
-        Serial.println(s_sd_log_dir);
+    if (!SD.exists(SD_LOG_DIR) && !SD.mkdir(SD_LOG_DIR)) {
+        Serial.println("[sd FAIL] mkdir failed for " SD_LOG_DIR);
         return;
     }
     s_sd_ready = true;
-    Serial.print("[sd] logging to ");
-    Serial.println(s_sd_log_dir);
+    Serial.println("[sd] logging to " SD_LOG_FILE " (appending across boots)");
 }
 
 /* ---- Modem/GNSS bring-up, ported from GpsOptimisation.ino ---------- */
@@ -330,7 +326,7 @@ void setup()
     Serial.print("[boot] resumed seq=");
     Serial.println(seq_store_get_seq());
 
-    sd_init_boot_folder();
+    sd_init_log_dir();
     gnss_bringup();
 
     s_matcher_queue = xQueueCreate(8, sizeof(SegDoneMsg));

@@ -10,9 +10,9 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 ```
 firmware/
   src/              pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
-                     (event_serializer, seq_store, boot_counter, gnss_parser, map_matcher,
-                     imu_state; track_types.h is the shared type-only header track_data.h
-                     #includes; imu_mpu6050.* is target-only, no host-testable logic there)
+                     (event_serializer, seq_store, gnss_parser, map_matcher, imu_state;
+                     track_types.h is the shared type-only header track_data.h #includes;
+                     imu_mpu6050.* is target-only, no host-testable logic there)
   test/             plain-C, assert-based host test programs, one per module
   config.example.h  documents every config.h field (WiFi, MQTT, LRV id, IMU_ENABLED); copy to
                      config.h (gitignored)
@@ -20,7 +20,7 @@ firmware/
                      (LilyGo reference sketches / user-confirmed schematic trace) in its own comments
   harness/
     stage3/         Stage 3 Wi-Fi hotspot harness, also doing Stage 6 SD store-and-forward
-                     logging (a fresh /boot_NNNN/ folder per boot)
+                     logging (one running /lrv_log/events.ndjson, appended to across every boot)
     stage5/         Stage 5: real GNSS (direct AT+CGNSSINFO, 1 Hz) + map matcher + optional
                      IMU stationary gate. Serial + SD only, no Wi-Fi/MQTT (deferred to Stage 7)
 tools/
