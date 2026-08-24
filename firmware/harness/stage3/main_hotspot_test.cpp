@@ -239,13 +239,16 @@ void setup()
     Serial.begin(115200);
     /* This board uses native USB-CDC serial (build_flags has
      * ARDUINO_USB_CDC_ON_BOOT=1) -- a reset/power-cycle re-enumerates the
-     * USB device, dropping and reconnecting the host's COM port. A fixed
-     * short delay isn't enough to cover that reconnect handshake, so the
-     * very first boot lines (including this SD/seq log) get lost before
-     * a monitor reattaches. Block briefly for an actual monitor to attach
-     * (Serial becomes truthy once the host opens the port), but time out
-     * so the device still boots normally with no monitor connected at all
-     * (e.g. running on battery in the field). */
+     * USB device, dropping and reconnecting the host's COM port, and a
+     * fixed short delay isn't enough to cover that reconnect handshake.
+     * A first attempt waited on Serial's own "connected" flag, but that
+     * flag isn't a fully reliable signal in practice across ESP32 Arduino
+     * core versions/host OSes -- it can read true as soon as the OS
+     * finishes USB enumeration, before a terminal has actually attached,
+     * so the wait resolved instantly and the boot lines were still lost.
+     * Belt-and-braces fix: keep the bounded wait as a fast path, then
+     * repeat the boot line itself for a few seconds so a monitor
+     * attaching anywhere in that window still catches it. */
     unsigned long serial_wait_start = millis();
     while (!Serial && millis() - serial_wait_start < 3000) {
         delay(10);
@@ -253,10 +256,15 @@ void setup()
     delay(100); /* small settle margin after the port opens */
 
     seq_store_init();
-    Serial.print("[boot] resumed seq=");
-    Serial.println(seq_store_get_seq());
-
     sd_init_log_dir();
+
+    char boot_banner[80];
+    snprintf(boot_banner, sizeof(boot_banner), "[boot] resumed seq=%lu, sd=%s",
+             (unsigned long)seq_store_get_seq(), s_sd_ready ? "ok" : "FAILED");
+    for (int i = 0; i < 5; i++) {
+        Serial.println(boot_banner);
+        delay(600);
+    }
 
     snprintf(s_topic_events, sizeof(s_topic_events), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
 
