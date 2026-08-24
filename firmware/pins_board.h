@@ -66,15 +66,9 @@
 #define MODEM_POWERON_PULSE_WIDTH_MS 100
 #define MODEM_START_WAIT_MS         3000
 
-/* GNSS enable, via AT+CGNSSPWR-style GPIO control on the modem itself
- * (not an ESP32 GPIO) -- level convention as used in the reference
- * example's modem.enableGPS(gpio, level) call. */
-#define MODEM_GPS_ENABLE_GPIO  1
-#define MODEM_GPS_ENABLE_LEVEL 1
-
-/* GNSS constellation mode for AT+CGNSSMODE / modem.setGPSMode(): GPS +
- * GLONASS + Galileo + BeiDou, per TDD D12 ("enable every constellation
- * the receiver supports"). */
+/* GNSS constellation mode for AT+CGNSSMODE: GPS + GLONASS + Galileo +
+ * BeiDou, per TDD D12 ("enable every constellation the receiver
+ * supports"). */
 #define MODEM_GPS_MODE 15
 
 /* microSD card, SPI bus (Stage 6, store-and-forward logging). Confirmed
