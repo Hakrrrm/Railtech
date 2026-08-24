@@ -10,9 +10,11 @@
  * against the physical schematic/silkscreen -- if your board doesn't
  * match, cross-check LilyGo's docs before wiring anything to these pins.
  *
- * Stage 3 (Wi-Fi hotspot harness) does not use any of these -- it only
- * touches the ESP32-S3's on-chip Wi-Fi. These become load-bearing at
- * Stage 5 (real matcher / GNSS) and Stage 7 (LTE MQTT).
+ * Stage 3's Wi-Fi/MQTT logic itself does not use any of these -- it only
+ * touches the ESP32-S3's on-chip Wi-Fi. The modem pins become
+ * load-bearing at Stage 5 (real matcher / GNSS) and Stage 7 (LTE MQTT).
+ * The SD_SPI_* pins below are the exception: the Stage 3 harness now
+ * also does Stage 6 SD logging, so those four are load-bearing today.
  *
  * PSRAM: RESOLVED, confirmed three independent ways -- the board id
  * itself (N16R2), LilyGo's KiCad schematic for the shared Standard-series
@@ -60,5 +62,14 @@
  * GLONASS + Galileo + BeiDou, per TDD D12 ("enable every constellation
  * the receiver supports"). */
 #define MODEM_GPS_MODE 15
+
+/* microSD card, SPI bus (Stage 6, store-and-forward logging). Confirmed
+ * against the board schematic by the user directly (CS = IO10); MOSI/
+ * SCLK/MISO follow the standard ESP32-S3 default SPI pinout used
+ * elsewhere on this board family. */
+#define SD_SPI_MOSI_PIN 11
+#define SD_SPI_SCLK_PIN 12
+#define SD_SPI_MISO_PIN 13
+#define SD_SPI_CS_PIN   10
 
 #endif /* PINS_BOARD_H */
