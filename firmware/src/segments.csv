@@ -1,0 +1,3 @@
+seg_id,order,loop,from,to,length_m,bidir
+DUMMY_A_B,0,dummy_loop,A,B,33,1
+DUMMY_B_C,1,dummy_loop,B,C,34,1
