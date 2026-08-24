@@ -39,11 +39,12 @@
  * team's earlier reference sketch's `#define TINY_GSM_MODEM_SIM7670G`
  * only ever compiled against LilyGo's own vendored fork, never the
  * registry package PlatformIO actually resolves here. Every AT command
- * used (AT+CGNSSPWR, AT+CGNSSMODE, AT+CGNSSINFO) is now confirmed
- * against SIMCOM's own SIM767XX Series_AT Command Manual_V1.06 -- see
- * gnss_bringup()'s own comment for the specifics (notably: CGNSSMODE
- * must be sent after CGNSSPWR=1, not before -- the manual documents it
- * as "valid after the GNSS power on").
+ * used (AT+CGNSSPWR, AT+CGNSSMODE, AT+CGNSSINFO) is confirmed against
+ * SIMCOM's own SIM767XX Series_AT Command Manual_V1.06, but the CALL
+ * ORDER in gnss_bringup() follows the reference sketch's own proven
+ * structure (mode set once before power-on, not after) rather than the
+ * manual's stated "CGNSSMODE is valid after GNSS power on" -- see
+ * gnss_bringup()'s own comment for why.
  *
  * Known simplifications (flagged, not silent):
  *   - dir ('E'/'W') is a Stage 5 placeholder for forward/reverse
@@ -227,16 +228,27 @@ static void wait_for_modem()
 }
 
 /*
- * GNSS mode/enable AT commands confirmed against SIMCOM's own
- * SIM767XX Series_AT Command Manual_V1.06 (Sec 21.2.1 AT+CGNSSPWR,
- * Sec 21.2.7 AT+CGNSSMODE): AT+CGNSSPWR=1 powers the GNSS module on
- * (single arg, 0/1), AT+CGNSSMODE=<mode> sets the constellation mix
- * (mode 15 = GPS+GLONASS+GALILEO+BEIDOU, matches MODEM_GPS_MODE) --
- * and critically, the manual documents CGNSSMODE as "valid after the
- * GNSS power on", so it must be sent after CGNSSPWR=1, not before (an
- * earlier version of this function had them backwards). AT+CGNSSINFO
- * (the 1 Hz poll) is also manual-confirmed -- gnss_parser.c's field
- * layout matches Sec 21.2.21 exactly.
+ * GNSS mode/enable AT commands: AT+CGNSSPWR=1 powers the GNSS module
+ * on, AT+CGNSSMODE=<mode> sets the constellation mix (mode 15 =
+ * GPS+GLONASS+GALILEO+BEIDOU, matches MODEM_GPS_MODE) -- both
+ * confirmed against SIMCOM's own SIM767XX Series_AT Command
+ * Manual_V1.06 (Sec 21.2.1, Sec 21.2.7). AT+CGNSSINFO (the 1 Hz poll)
+ * is also manual-confirmed -- gnss_parser.c's field layout matches
+ * Sec 21.2.21 exactly.
+ *
+ * Call order/structure here is ported from GpsOptimisation.ino's own
+ * TinyGSM-based bring-up (modem.setGPSMode() once, no retry, THEN a
+ * while(!modem.enableGPS()) retry loop) rather than the manual's
+ * stated "CGNSSMODE is valid after GNSS power on" -- an earlier
+ * version of this function followed the manual instead (CGNSSPWR
+ * first, with a longer per-attempt timeout) and still never got a
+ * fix, on hardware confirmed to have the antenna on the correct
+ * connector, outdoors, clear sky, several minutes. Reordering to
+ * match the sketch's proven structure exactly, since that sketch is
+ * known-working on this exact board/modem and the manual can't see
+ * what TinyGSM's actual (invisible-to-us) fork implementation bundles
+ * together internally when the two calls appear in this order at the
+ * application level.
  */
 static void gnss_bringup()
 {
@@ -262,44 +274,37 @@ static void gnss_bringup()
     Serial.print("[modem] ATI: ");
     Serial.println(resp);
 
-    /* AT+CGNSSPWR must come before AT+CGNSSMODE -- the manual documents
-     * CGNSSMODE as "valid after the GNSS power on", and sending it
-     * first (an earlier version of this function did) would just fail.
-     *
-     * Both commands are documented with Max Response Time: 10000ms --
-     * an earlier version of this function used a 2000ms timeout inside
-     * a tight 10-attempt retry loop, which could resend AT+CGNSSPWR=1
-     * while the GNSS engine was still mid-boot from a previous attempt
-     * (the AT layer can return OK quickly while the actual GNSS chip
-     * initialisation is still in progress internally). Re-triggering
-     * power-on mid-boot is a plausible way to leave the receiver in a
-     * state where it accepts commands but never actually starts
-     * acquiring -- exactly what showed up on real hardware (both
-     * commands report success, but no fix ever, even outdoors with a
-     * correctly connected antenna after several minutes). Fixed: give
-     * each attempt the full documented window, and don't hammer it. */
-    Serial.println("[gnss] powering on GNSS...");
-    bool gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 10000);
-    if (!gnss_on) {
-        Serial.print("[gnss] AT+CGNSSPWR=1 timed out, retrying once: ");
+    /* modem.setGPSMode(GPS_MODE) in the reference sketch: one call, no
+     * retry, no error check -- just fired and moved straight on. */
+    char mode_cmd[32];
+    snprintf(mode_cmd, sizeof(mode_cmd), "AT+CGNSSMODE=%u", (unsigned)MODEM_GPS_MODE);
+    Serial.printf("[gnss] setting GNSS mode %u...\n", (unsigned)MODEM_GPS_MODE);
+    if (!send_at_command(mode_cmd, resp, 2000)) {
+        Serial.print("[gnss] AT+CGNSSMODE did not return OK, response so far: ");
         Serial.println(resp);
-        delay(1000);
-        gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 10000);
     }
+
+    /* while (!modem.enableGPS(gpio, level)) { print '.'; delay(500); }
+     * in the reference sketch -- retries indefinitely, not bounded.
+     * Bounded here (60 attempts, ~30s) so a genuinely dead modem can't
+     * hang setup() forever; the sketch's own unbounded loop was never
+     * hit in practice because the command always eventually succeeded. */
+    Serial.println("[gnss] powering on GNSS...");
+    bool gnss_on = false;
+    for (int attempt = 0; attempt < 60 && !gnss_on; attempt++) {
+        gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 1000);
+        if (!gnss_on) {
+            Serial.print(".");
+            delay(500);
+        }
+    }
+    Serial.println();
     if (gnss_on) {
         Serial.println("[gnss] enabled.");
     } else {
         Serial.print("[gnss] AT+CGNSSPWR=1 never returned OK, response so far: ");
         Serial.println(resp);
         Serial.println("[gnss] continuing anyway -- AT+CGNSSINFO polling will just report no fix");
-    }
-
-    char mode_cmd[32];
-    snprintf(mode_cmd, sizeof(mode_cmd), "AT+CGNSSMODE=%u", (unsigned)MODEM_GPS_MODE);
-    Serial.printf("[gnss] setting GNSS mode %u...\n", (unsigned)MODEM_GPS_MODE);
-    if (!send_at_command(mode_cmd, resp, 10000)) {
-        Serial.print("[gnss] AT+CGNSSMODE did not return OK, response so far: ");
-        Serial.println(resp);
     }
 }
 
