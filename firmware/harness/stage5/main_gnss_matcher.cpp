@@ -311,15 +311,14 @@ static void gnss_bringup()
      * never actually awaited, producing endless "no fix" with every
      * command reporting success.
      *
-     * Observed on real hardware (V1.9.05): CGNSSPWR=1 returns OK but no
-     * READY URC within 30 s. Resending it blindly (a previous revision
-     * did, 3x) is counterproductive -- each retry flushes the UART
-     * (discarding a READY in flight) and re-pokes a possibly mid-boot
-     * engine, while stalling polling for up to 90 s. So: one READY
-     * wait, and if it times out, verify state with AT+CGNSSPWR? (read
-     * command, manual Sec 21.2.1) instead of hammering -- "+CGNSSPWR: 1"
-     * means the engine is on regardless of whether we caught the URC,
-     * and CGNSSINFO polling is harmless to start either way. */
+     * Unlike the fork, no blocking wait for the "+CGNSSPWR: READY!"
+     * URC here: observed on real hardware (V1.9.05) that the URC
+     * doesn't reliably arrive within 30 s even when the engine is fine,
+     * and gating on it just stalled the 1 Hz polling loop. Polling
+     * AT+CGNSSINFO against a still-booting engine is harmless (the
+     * no-fix and error responses are both handled), so the continuous
+     * poll IS the retry -- fire the enable commands, log any failures,
+     * and let gnss_matcher_task take it from there immediately. */
     Serial.println("[gnss] powering GNSS antenna rail + engine...");
     char gpio_cmd[32];
     snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGDRT=%u,1", (unsigned)MODEM_GPS_ENABLE_GPIO);
@@ -334,18 +333,12 @@ static void gnss_bringup()
         Serial.println(resp);
     }
 
-    bool gnss_on = send_at_command_expect("AT+CGNSSPWR=1", resp, "+CGNSSPWR: READY!", 30000);
-    if (gnss_on) {
-        Serial.println("[gnss] enabled (READY).");
+    if (send_at_command("AT+CGNSSPWR=1", resp, 10000)) {
+        Serial.println("[gnss] power-on accepted, engine booting -- polling starts now.");
     } else {
-        Serial.println("[gnss] no READY URC in 30s, checking power state via AT+CGNSSPWR?...");
-        if (send_at_command_expect("AT+CGNSSPWR?", resp, "+CGNSSPWR: 1", 2000)) {
-            Serial.println("[gnss] engine reports powered on -- proceeding (READY URC just wasn't caught).");
-        } else {
-            Serial.print("[gnss] engine reports NOT powered, response: ");
-            Serial.println(resp);
-            Serial.println("[gnss] continuing anyway -- polling will report no fix");
-        }
+        Serial.print("[gnss] AT+CGNSSPWR=1 did not return OK, response: ");
+        Serial.println(resp);
+        Serial.println("[gnss] continuing anyway -- polling will report no fix");
     }
 
     /* modem.setGPSBaud(115200) in the reference sketch. */
