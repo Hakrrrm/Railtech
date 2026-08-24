@@ -16,16 +16,19 @@
  * The SD_SPI_* pins below are the exception: the Stage 3 harness now
  * also does Stage 6 SD logging, so those four are load-bearing today.
  *
- * QWIIC_I2C_*_PIN: PLACEHOLDER, NOT YET CONFIRMED. The Standard board's
- * KiCad schematic (T-A7670X-S3-Standard Rev1.0) confirms a dedicated
- * Qwiic-I2C connector (CN4, with its own 10k pull-ups) exists -- the
- * MPU6050 just plugs into it, no manual wiring -- but flattened PDF
- * text extraction couldn't reliably recover which two ESP32-S3 GPIOs
- * back that connector's SDA/SCL nets (unlike SD_CS, which had an
- * unambiguous adjacent label). Trace QWIIC_SDA/QWIIC_SCL on the
- * schematic to their IOxx pins and replace -1 below before flashing
- * Stage 5 -- imu_mpu6050.c refuses to init I2C while these are -1
- * rather than guess wrong pins silently.
+ * QWIIC_I2C_*_PIN: RESOLVED. The Standard board's KiCad schematic
+ * (T-A7670X-S3-Standard Rev1.0) confirmed a dedicated Qwiic-I2C
+ * connector (CN4, with its own 10k pull-ups) exists -- the MPU6050 just
+ * plugs into it, no manual wiring -- but flattened PDF text extraction
+ * couldn't recover which two ESP32-S3 GPIOs back that connector's
+ * SDA/SCL nets. Resolved instead from LilyGo's own QWIIC_I2C_Scan.ino
+ * example, which hardcodes SDA=IO3/SCL=IO2 "by default" for "Standard
+ * Series" boards (this board's exact family) -- the same class of
+ * working-reference-sketch source already used for the modem UART pins
+ * above and MODEM_GPS_MODE/GNSS enable. That sketch also shows a second,
+ * independent I2C bus available by repurposing the Qwiic-UART
+ * connector's TX/RX (IO43/IO44) via Wire1 -- unused here, noted for
+ * later if a second I2C device is ever needed.
  *
  * PSRAM: RESOLVED, confirmed three independent ways -- the board id
  * itself (N16R2), LilyGo's KiCad schematic for the shared Standard-series
@@ -83,9 +86,9 @@
 #define SD_SPI_MISO_PIN 13
 #define SD_SPI_CS_PIN   10
 
-/* Qwiic I2C (Stage 5, MPU6050 IMU). -1 = unconfirmed -- see note above.
- * Fill in from the schematic before flashing Stage 5 with IMU_ENABLED. */
-#define QWIIC_I2C_SDA_PIN -1
-#define QWIIC_I2C_SCL_PIN -1
+/* Qwiic I2C (Stage 5, MPU6050 IMU). Confirmed via LilyGo's own
+ * QWIIC_I2C_Scan.ino example for this board family -- see note above. */
+#define QWIIC_I2C_SDA_PIN 3
+#define QWIIC_I2C_SCL_PIN 2
 
 #endif /* PINS_BOARD_H */

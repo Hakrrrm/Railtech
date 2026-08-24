@@ -17,7 +17,8 @@ extern "C" {
 
 /* Inits I2C on the given pins and wakes the MPU6050 out of sleep.
  * Returns false (and leaves the device unused) if sda_pin/scl_pin are
- * negative (unconfirmed, see pins_board.h) or the device doesn't ACK. */
+ * negative (pins_board.h QWIIC_I2C_*_PIN misconfigured) or the device
+ * doesn't ACK. */
 bool imu_mpu6050_init(int sda_pin, int scl_pin);
 
 /* Reads one raw accelerometer sample (+-2g/16384 LSB-per-g). Returns

@@ -16,8 +16,8 @@ firmware/
   test/             plain-C, assert-based host test programs, one per module
   config.example.h  documents every config.h field (WiFi, MQTT, LRV id, IMU_ENABLED); copy to
                      config.h (gitignored)
-  pins_board.h      modem UART/power/GNSS/SD pin assignments; Qwiic I2C pins are still an
-                     unconfirmed placeholder (-1) pending a schematic trace -- see its own comments
+  pins_board.h      modem UART/power/GNSS/SD/Qwiic-I2C pin assignments, each cited to its source
+                     (LilyGo reference sketches / user-confirmed schematic trace) in its own comments
   harness/
     stage3/         Stage 3 Wi-Fi hotspot harness, also doing Stage 6 SD store-and-forward
                      logging (a fresh /boot_NNNN/ folder per boot)

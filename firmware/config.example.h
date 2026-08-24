@@ -25,9 +25,7 @@
  * (skip AT+CGNSSINFO while imu_state says stationary, to save modem
  * cycles/power). Set to 0 to force GNSS to keep polling regardless of
  * motion -- useful for bench testing while the board sits still on a
- * desk. Requires QWIIC_I2C_SDA_PIN/QWIIC_I2C_SCL_PIN in pins_board.h to
- * be filled in from -1; the harness disables IMU and logs why if they
- * aren't, even with this set to 1. */
+ * desk. */
 #define IMU_ENABLED 1
 
 #endif /* CONFIG_H */
