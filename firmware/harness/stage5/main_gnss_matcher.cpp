@@ -173,11 +173,15 @@ static void sd_init_log_dir()
  * own vendored/forked copy, never the registry package PlatformIO
  * actually resolves. */
 
-/* Sends one AT command over SerialAT and reads until a terminal OK/
- * ERROR line or timeout. Same read loop GpsOptimisation.ino's own
- * rawGpsQuery() uses for AT+CGNSSINFO -- generalised here so bring-up
- * and the 1 Hz poll share one implementation. */
-static bool send_at_command(const char *cmd, String &response, unsigned long timeout_ms = 2000)
+/* Sends one AT command over SerialAT and reads until a terminal token
+ * (OK by default -- pass e.g. "+CGNSSPWR: READY!" to wait for a URC
+ * that arrives AFTER the OK), an ERROR line, or timeout. Same read
+ * loop GpsOptimisation.ino's own rawGpsQuery() uses for AT+CGNSSINFO
+ * -- generalised here so bring-up and the 1 Hz poll share one
+ * implementation. */
+static bool send_at_command_expect(const char *cmd, String &response,
+                                    const char *expect_token,
+                                    unsigned long timeout_ms)
 {
     response = "";
     while (SerialAT.available()) {
@@ -190,7 +194,7 @@ static bool send_at_command(const char *cmd, String &response, unsigned long tim
         while (SerialAT.available()) {
             char c = (char)SerialAT.read();
             response += c;
-            if (response.indexOf("\r\nOK\r\n") >= 0) {
+            if (response.indexOf(expect_token) >= 0) {
                 return true;
             }
             if (response.indexOf("\r\nERROR\r\n") >= 0) {
@@ -200,6 +204,11 @@ static bool send_at_command(const char *cmd, String &response, unsigned long tim
         delay(1);
     }
     return false;
+}
+
+static bool send_at_command(const char *cmd, String &response, unsigned long timeout_ms = 2000)
+{
+    return send_at_command_expect(cmd, response, "\r\nOK\r\n", timeout_ms);
 }
 
 static void pulse_pwrkey()
@@ -284,28 +293,50 @@ static void gnss_bringup()
         Serial.println(resp);
     }
 
-    /* while (!modem.enableGPS(gpio, level)) { print '.'; delay(500); }
-     * in the reference sketch -- retries indefinitely, not bounded.
-     * Bounded here (60 attempts, ~30s) so a genuinely dead modem can't
-     * hang setup() forever; the sketch's own unbounded loop was never
-     * hit in practice because the command always eventually succeeded. */
-    Serial.println("[gnss] powering on GNSS...");
+    /* while (!modem.enableGPS(gpio, level)) { ... } in the reference
+     * sketch. What that call ACTUALLY sends, verbatim from LilyGo's own
+     * TinyGSM fork (LilyGo-Modem-Series lib/TinyGSM/src/
+     * TinyGsmClientA76xx.h, enableGPSImpl):
+     *
+     *   AT+CGDRT=<gpio>,1        modem GPIO direction: output
+     *   AT+CGSETV=<gpio>,<level> modem GPIO value: high
+     *   AT+CGNSSPWR=1            then wait up to 30 s for the URC
+     *                            "+CGNSSPWR: READY!" -- NOT just OK
+     *
+     * The first two drive the modem's GPIO1, which on this board's
+     * schematic is the GNSS_ANT_PWR net: it enables the power rail for
+     * the active GNSS antenna. An earlier version of this function sent
+     * only AT+CGNSSPWR=1 and accepted the immediate OK -- so the
+     * antenna was never powered and the GNSS engine's readiness was
+     * never actually awaited, producing endless "no fix" with every
+     * command reporting success. Bounded to 3 whole-sequence attempts
+     * (the sketch retries unbounded; each attempt already waits up to
+     * 30 s for READY). */
+    Serial.println("[gnss] powering GNSS antenna rail + engine...");
+    char gpio_cmd[32];
     bool gnss_on = false;
-    for (int attempt = 0; attempt < 60 && !gnss_on; attempt++) {
-        gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 1000);
+    for (int attempt = 0; attempt < 3 && !gnss_on; attempt++) {
+        snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGDRT=%u,1", (unsigned)MODEM_GPS_ENABLE_GPIO);
+        send_at_command(gpio_cmd, resp, 2000);
+        snprintf(gpio_cmd, sizeof(gpio_cmd), "AT+CGSETV=%u,%u",
+                 (unsigned)MODEM_GPS_ENABLE_GPIO, (unsigned)MODEM_GPS_ENABLE_LEVEL);
+        send_at_command(gpio_cmd, resp, 2000);
+
+        gnss_on = send_at_command_expect("AT+CGNSSPWR=1", resp, "+CGNSSPWR: READY!", 30000);
         if (!gnss_on) {
-            Serial.print(".");
+            Serial.print("[gnss] no READY yet, retrying, response so far: ");
+            Serial.println(resp);
             delay(500);
         }
     }
-    Serial.println();
     if (gnss_on) {
-        Serial.println("[gnss] enabled.");
+        Serial.println("[gnss] enabled (READY).");
     } else {
-        Serial.print("[gnss] AT+CGNSSPWR=1 never returned OK, response so far: ");
-        Serial.println(resp);
-        Serial.println("[gnss] continuing anyway -- AT+CGNSSINFO polling will just report no fix");
+        Serial.println("[gnss] never saw +CGNSSPWR: READY! -- continuing, polling will report no fix");
     }
+
+    /* modem.setGPSBaud(115200) in the reference sketch. */
+    send_at_command("AT+CGNSSIPR=115200", resp, 2000);
 }
 
 /* Direct AT+CGNSSINFO query, 1 Hz poll. */
