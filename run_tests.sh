@@ -25,6 +25,30 @@ gcc $CFLAGS -I firmware/src \
 "$BUILD_DIR/test_boot_counter"
 
 echo
+echo "== firmware/test/test_gnss_parser =="
+gcc $CFLAGS -I firmware/src \
+    -o "$BUILD_DIR/test_gnss_parser" \
+    firmware/test/test_gnss_parser.c \
+    firmware/src/gnss_parser.c
+"$BUILD_DIR/test_gnss_parser"
+
+echo
+echo "== firmware/test/test_map_matcher =="
+gcc $CFLAGS -I firmware/src \
+    -o "$BUILD_DIR/test_map_matcher" \
+    firmware/test/test_map_matcher.c \
+    firmware/src/map_matcher.c -lm
+"$BUILD_DIR/test_map_matcher"
+
+echo
+echo "== firmware/test/test_imu_state =="
+gcc $CFLAGS -I firmware/src \
+    -o "$BUILD_DIR/test_imu_state" \
+    firmware/test/test_imu_state.c \
+    firmware/src/imu_state.c
+"$BUILD_DIR/test_imu_state"
+
+echo
 echo "== tools/test_track_pipeline =="
 python3 tools/test_track_pipeline.py
 

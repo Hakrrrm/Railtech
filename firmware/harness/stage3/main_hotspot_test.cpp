@@ -40,8 +40,8 @@ extern "C" {
 #include "boot_counter.h"
 }
 
-#include "../config.h"
-#include "../pins_board.h"
+#include "../../config.h"
+#include "../../pins_board.h"
 
 /* ---- fake matcher -> net task queue message ---------------------- */
 
