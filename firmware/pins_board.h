@@ -14,12 +14,14 @@
  * touches the ESP32-S3's on-chip Wi-Fi. These become load-bearing at
  * Stage 5 (real matcher / GNSS) and Stage 7 (LTE MQTT).
  *
- * PSRAM cross-check: LilyGo's KiCad schematic for the shared Standard-
- * series PCB (T-A7670X-S3-Standard Rev1.0, explicitly labelled "SIM7670G/
- * A7670X compatibility design" -- i.e. this wiring is shared across both
- * modem variants) labels the MCU as ESP32-S3-WROOM-1(N16R2): 16 MB flash,
- * 2 MB PSRAM. This contradicts TDD Sec 5.1's stated 8 MB PSRAM -- worth
- * raising as a TDD correction, not just a firmware assumption.
+ * PSRAM: RESOLVED, confirmed three independent ways -- the board id
+ * itself (N16R2), LilyGo's KiCad schematic for the shared Standard-series
+ * PCB (T-A7670X-S3-Standard Rev1.0, labelled "SIM7670G/A7670X
+ * compatibility design", MCU ESP32-S3-WROOM-1(N16R2)), and
+ * boards/esp32-s3-wroom-1-n16r2.json's own name field ("16M Flash 2M
+ * QSPI PSRAM"), pulled from a working LilyGo project. It's 2 MB, not the
+ * 8 MB TDD Sec 5.1 states -- that's a TDD correction to make, not a
+ * remaining firmware question.
  *
  * UNRESOLVED: tracing that same schematic's net labels suggests
  * MODEM_RX_PIN might actually be GPIO6, not GPIO5 -- net "MODEM_TX" (the
