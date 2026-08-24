@@ -71,6 +71,15 @@
  * supports"). */
 #define MODEM_GPS_MODE 15
 
+/* GNSS antenna power: the MODEM's own GPIO1 (not an ESP32 pin) drives
+ * the GNSS_ANT_PWR net on the schematic -- the active antenna's power
+ * rail. Driven via AT+CGDRT/AT+CGSETV during bring-up; level 1 = on.
+ * Same (gpio, level) pair the reference sketches pass to
+ * modem.enableGPS(1, 1). Without this the antenna is unpowered and no
+ * fix ever arrives, with every AT command still reporting success. */
+#define MODEM_GPS_ENABLE_GPIO  1
+#define MODEM_GPS_ENABLE_LEVEL 1
+
 /* microSD card, SPI bus (Stage 6, store-and-forward logging). Confirmed
  * against the board schematic by the user directly (CS = IO10); MOSI/
  * SCLK/MISO follow the standard ESP32-S3 default SPI pinout used
