@@ -264,21 +264,32 @@ static void gnss_bringup()
 
     /* AT+CGNSSPWR must come before AT+CGNSSMODE -- the manual documents
      * CGNSSMODE as "valid after the GNSS power on", and sending it
-     * first (an earlier version of this function did) would just fail. */
+     * first (an earlier version of this function did) would just fail.
+     *
+     * Both commands are documented with Max Response Time: 10000ms --
+     * an earlier version of this function used a 2000ms timeout inside
+     * a tight 10-attempt retry loop, which could resend AT+CGNSSPWR=1
+     * while the GNSS engine was still mid-boot from a previous attempt
+     * (the AT layer can return OK quickly while the actual GNSS chip
+     * initialisation is still in progress internally). Re-triggering
+     * power-on mid-boot is a plausible way to leave the receiver in a
+     * state where it accepts commands but never actually starts
+     * acquiring -- exactly what showed up on real hardware (both
+     * commands report success, but no fix ever, even outdoors with a
+     * correctly connected antenna after several minutes). Fixed: give
+     * each attempt the full documented window, and don't hammer it. */
     Serial.println("[gnss] powering on GNSS...");
-    bool gnss_on = false;
-    for (int attempt = 0; attempt < 10 && !gnss_on; attempt++) {
-        gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 2000);
-        if (!gnss_on) {
-            Serial.print(".");
-            delay(500);
-        }
+    bool gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 10000);
+    if (!gnss_on) {
+        Serial.print("[gnss] AT+CGNSSPWR=1 timed out, retrying once: ");
+        Serial.println(resp);
+        delay(1000);
+        gnss_on = send_at_command("AT+CGNSSPWR=1", resp, 10000);
     }
-    Serial.println();
     if (gnss_on) {
         Serial.println("[gnss] enabled.");
     } else {
-        Serial.print("[gnss] AT+CGNSSPWR=1 never returned OK after 10 attempts, response so far: ");
+        Serial.print("[gnss] AT+CGNSSPWR=1 never returned OK, response so far: ");
         Serial.println(resp);
         Serial.println("[gnss] continuing anyway -- AT+CGNSSINFO polling will just report no fix");
     }
@@ -286,7 +297,7 @@ static void gnss_bringup()
     char mode_cmd[32];
     snprintf(mode_cmd, sizeof(mode_cmd), "AT+CGNSSMODE=%u", (unsigned)MODEM_GPS_MODE);
     Serial.printf("[gnss] setting GNSS mode %u...\n", (unsigned)MODEM_GPS_MODE);
-    if (!send_at_command(mode_cmd, resp, 2000)) {
+    if (!send_at_command(mode_cmd, resp, 10000)) {
         Serial.print("[gnss] AT+CGNSSMODE did not return OK, response so far: ");
         Serial.println(resp);
     }
