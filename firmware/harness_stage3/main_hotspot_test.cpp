@@ -89,12 +89,34 @@ static void fake_matcher_task(void *arg)
 
 /* ---- Core 1 (Arduino loop): Wi-Fi/MQTT + commit-before-publish ---- */
 
+/* Diagnostic only -- lets a failed retry say *why* instead of just
+ * "timed out", since that distinction (no SSID seen vs. auth rejected
+ * vs. generic disconnect) narrows down real Wi-Fi issues fast. */
+static const char *wifi_status_name(wl_status_t status)
+{
+    switch (status) {
+        case WL_IDLE_STATUS:     return "WL_IDLE_STATUS";
+        case WL_NO_SSID_AVAIL:   return "WL_NO_SSID_AVAIL (SSID not seen -- out of range or wrong name)";
+        case WL_SCAN_COMPLETED:  return "WL_SCAN_COMPLETED";
+        case WL_CONNECTED:       return "WL_CONNECTED";
+        case WL_CONNECT_FAILED:  return "WL_CONNECT_FAILED (likely wrong password)";
+        case WL_CONNECTION_LOST: return "WL_CONNECTION_LOST";
+        case WL_DISCONNECTED:    return "WL_DISCONNECTED";
+        default:                 return "WL_UNKNOWN";
+    }
+}
+
 static void ensure_wifi_connected()
 {
     if (WiFi.status() == WL_CONNECTED) {
         return;
     }
     Serial.println("[wifi] connecting...");
+    /* Clear any stale connection/auth state before retrying -- calling
+     * begin() repeatedly on top of a half-connected or lost session is a
+     * known source of the ESP32 Wi-Fi driver getting stuck. */
+    WiFi.disconnect();
+    delay(100);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     unsigned long start = millis();
@@ -103,11 +125,16 @@ static void ensure_wifi_connected()
         Serial.print(".");
     }
     Serial.println();
-    if (WiFi.status() == WL_CONNECTED) {
+    wl_status_t status = WiFi.status();
+    if (status == WL_CONNECTED) {
         Serial.print("[wifi] connected, ip=");
         Serial.println(WiFi.localIP());
     } else {
-        Serial.println("[wifi] connect timed out, will retry");
+        Serial.print("[wifi] connect timed out, will retry (status=");
+        Serial.print((int)status);
+        Serial.print(" ");
+        Serial.print(wifi_status_name(status));
+        Serial.println(")");
     }
 }
 
