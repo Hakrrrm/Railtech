@@ -312,10 +312,13 @@ static void handle_seg_done(const SegDoneMsg &m)
 void setup()
 {
     Serial.begin(115200);
-    /* Native USB-CDC serial re-enumerates on reset/power-cycle -- wait
-     * for a monitor to actually attach so early boot lines aren't lost.
-     * Bounded so the device still boots fine with no monitor connected
-     * (see the Stage 6 harness for the fuller explanation). */
+    /* Native USB-CDC serial re-enumerates on reset/power-cycle. Serial's
+     * own "connected" flag isn't a fully reliable signal for "a monitor
+     * has actually attached" across ESP32 Arduino core versions/host
+     * OSes -- keep the bounded wait as a fast path, but also repeat the
+     * boot line for a few seconds so a monitor attaching anywhere in
+     * that window still catches it (see the Stage 6 harness for the
+     * fuller explanation). */
     unsigned long serial_wait_start = millis();
     while (!Serial && millis() - serial_wait_start < 3000) {
         delay(10);
@@ -323,10 +326,16 @@ void setup()
     delay(100);
 
     seq_store_init();
-    Serial.print("[boot] resumed seq=");
-    Serial.println(seq_store_get_seq());
-
     sd_init_log_dir();
+
+    char boot_banner[80];
+    snprintf(boot_banner, sizeof(boot_banner), "[boot] resumed seq=%lu, sd=%s",
+             (unsigned long)seq_store_get_seq(), s_sd_ready ? "ok" : "FAILED");
+    for (int i = 0; i < 5; i++) {
+        Serial.println(boot_banner);
+        delay(600);
+    }
+
     gnss_bringup();
 
     s_matcher_queue = xQueueCreate(8, sizeof(SegDoneMsg));
