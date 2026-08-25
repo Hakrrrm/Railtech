@@ -5,6 +5,7 @@
  */
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "gnss_parser.h"
 
@@ -38,6 +39,9 @@ static void test_valid_fix_parses(void)
     assert(fix.lat_e7 == 12937000);
     assert(fix.lon_e7 == 1038558000);
     assert(fix.hdop_x10 == 14);
+    assert(fix.alt_m_x10 == 152);  /* field 11: 15.2 m  */
+    assert(fix.pdop_x10 == 18);    /* field 14: 1.8     */
+    assert(fix.vdop_x10 == 11);    /* field 16: 1.1     */
     /* 4.32 knots -> 4.32 * 514.444 = 2222.4 mm/s, half-up -> 2222 */
     assert(fix.speed_mmps == 2222);
     /* date=240826 (24 Aug 2026), time=123456 -> 2026-08-24T12:34:56Z */
@@ -103,6 +107,72 @@ static void test_truncated_line_rejected(void)
     printf("[ok] truncated/malformed line rejected rather than reading garbage\n");
 }
 
+static void test_manual_worked_example_field_mapping(void)
+{
+    /* The AT manual's OWN worked example (Sec 21.2.21), used here as an
+     * independent check that every field index lines up with the spec.
+     * Its lat/lon are the one part deliberately not asserted: read as
+     * plain decimal degrees they're impossible (lat 3113 deg), so that
+     * example is printed NMEA-style even though the same manual's
+     * Defined Values table says dd.dddddd. Real hardware for this
+     * project emits decimal degrees (confirmed against a known
+     * location), which is what the parser implements. */
+    const char *raw =
+        "+CGNSSINFO: 2,09,05,00,00,3113.330650,N,12121.262554,E,131117,"
+        "091918.00,32.9,0.0,255.0,1.1,0.8,0.7,14\r\n\r\nOK\r\n";
+
+    gnss_fix_t fix;
+    assert(gnss_parse_cgnssinfo(raw, &fix) == 0);
+    assert(fix.valid == 1);
+    assert(fix.fix_mode == 2);
+    assert(fix.alt_m_x10 == 329); /* 32.9 m */
+    assert(fix.pdop_x10 == 11);   /* 1.1 */
+    assert(fix.hdop_x10 == 8);    /* 0.8 */
+    assert(fix.vdop_x10 == 7);    /* 0.7 */
+    assert(fix.nsv == 14);
+    assert(fix.speed_mmps == 0);
+    printf("[ok] manual's worked example maps to the documented field indices\n");
+}
+
+static void test_local_datetime_formatting(void)
+{
+    char date[11], time[9];
+
+    /* 2026-08-24T12:34:56Z + 8h = same day, 20:34:56 SGT. */
+    assert(gnss_format_datetime(1787574896u, GNSS_TZ_OFFSET_S_SINGAPORE,
+                                date, sizeof(date), time, sizeof(time)) == 0);
+    assert(strcmp(date, "2026-08-24") == 0);
+    assert(strcmp(time, "20:34:56") == 0);
+    printf("[ok] UTC->SGT within the same day\n");
+
+    /* 2026-08-24T17:00:00Z + 8h crosses midnight -> the DATE must roll
+     * over to the 25th, not stay on the 24th. */
+    assert(gnss_format_datetime(1787590800u, GNSS_TZ_OFFSET_S_SINGAPORE,
+                                date, sizeof(date), time, sizeof(time)) == 0);
+    assert(strcmp(date, "2026-08-25") == 0);
+    assert(strcmp(time, "01:00:00") == 0);
+    printf("[ok] UTC->SGT rolls the date over across midnight\n");
+
+    /* Month/year boundary: 2026-12-31T20:00:00Z + 8h -> 2027-01-01. */
+    assert(gnss_format_datetime(1798747200u, GNSS_TZ_OFFSET_S_SINGAPORE,
+                                date, sizeof(date), time, sizeof(time)) == 0);
+    assert(strcmp(date, "2027-01-01") == 0);
+    assert(strcmp(time, "04:00:00") == 0);
+    printf("[ok] UTC->SGT rolls month and year over correctly\n");
+
+    /* Leap day must survive the round trip: 2028-02-29T00:00:00Z. */
+    assert(gnss_format_datetime(1835395200u, 0,
+                                date, sizeof(date), time, sizeof(time)) == 0);
+    assert(strcmp(date, "2028-02-29") == 0);
+    printf("[ok] leap day renders correctly\n");
+
+    /* Undersized buffers are refused, not overflowed. */
+    char tiny[4];
+    assert(gnss_format_datetime(1787574896u, 0, tiny, sizeof(tiny), time, sizeof(time)) == -1);
+    assert(tiny[0] == '\0');
+    printf("[ok] undersized buffer rejected without overflow\n");
+}
+
 static void test_null_args_rejected(void)
 {
     gnss_fix_t fix;
@@ -119,6 +189,8 @@ int main(void)
     test_real_hardware_truncated_no_fix_response();
     test_missing_marker_rejected();
     test_truncated_line_rejected();
+    test_manual_worked_example_field_mapping();
+    test_local_datetime_formatting();
     test_null_args_rejected();
 
     printf("all tests passed\n");

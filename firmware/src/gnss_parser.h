@@ -1,6 +1,7 @@
 #ifndef GNSS_PARSER_H
 #define GNSS_PARSER_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -22,7 +23,10 @@ typedef struct {
     int         valid;      /* 1 if fix_mode indicates a usable fix, else 0 */
     uint8_t     fix_mode;   /* raw +CGNSSINFO fix mode field: 2=2D fix, 3=3D fix per the manual */
     uint8_t     nsv;        /* NoSV field -- satellites involved in positioning, modem-computed total */
+    int16_t     pdop_x10;   /* PDOP, actual value x10 */
     int16_t     hdop_x10;   /* HDOP, actual value x10 */
+    int16_t     vdop_x10;   /* VDOP, actual value x10 */
+    int32_t     alt_m_x10;  /* MSL altitude in metres x10 (can be negative below sea level) */
     int32_t     lat_e7;     /* latitude,  degrees x 1e7 */
     int32_t     lon_e7;     /* longitude, degrees x 1e7 */
     uint32_t    speed_mmps; /* ground speed, millimetres/second (from knots) */
@@ -43,5 +47,24 @@ typedef struct {
  * format requires (malformed/truncated read).
  */
 int gnss_parse_cgnssinfo(const char *raw, gnss_fix_t *out);
+
+/* Fixed UTC offset for Singapore Standard Time. Singapore has observed
+ * no DST since 1933, so a constant offset is correct here rather than a
+ * simplification -- do NOT reuse this for a region with DST. */
+#define GNSS_TZ_OFFSET_S_SINGAPORE (8 * 3600)
+
+/*
+ * Renders a UTC unix epoch, shifted by offset_s, into a local calendar
+ * date "YYYY-MM-DD" and clock time "HH:MM:SS". Applying the offset
+ * before splitting the epoch means a shift across midnight rolls the
+ * DATE over too, which naive "print the fix's raw date field, add hours
+ * to the raw time field" handling gets wrong.
+ *
+ * date_out needs >= 11 bytes, time_out >= 9. Returns 0 on success, -1
+ * on a null/undersized buffer (both buffers left empty in that case).
+ */
+int gnss_format_datetime(uint32_t utc_epoch_s, int32_t offset_s,
+                         char *date_out, size_t date_len,
+                         char *time_out, size_t time_len);
 
 #endif /* GNSS_PARSER_H */

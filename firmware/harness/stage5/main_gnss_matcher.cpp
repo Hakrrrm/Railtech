@@ -345,6 +345,37 @@ static void gnss_bringup()
     send_at_command("AT+CGNSSIPR=115200", resp, 2000);
 }
 
+/* ---- fixed-point -> human-readable rendering ----------------------
+ * The GNSS_RAW JSON below is read by a person off the serial monitor
+ * and the SD card, so it carries decimal-formatted values rather than
+ * the internal fixed-point integers -- an earlier revision printed
+ * lat_e7 raw (12937000), which reads as a correct location "missing
+ * its decimal point". Rendered with integer arithmetic rather than
+ * %f: exact truncation, no rounding surprises, and no float
+ * formatting dragged into the 1 Hz path. */
+
+/* degrees*1e7 -> "[-]D.DDDDDD", truncating the 7th decimal place. The
+ * modem emits 6 dp, so the 7th is always a trailing zero from our own
+ * scaling and nothing real is lost. */
+static void format_deg_e7(int32_t deg_e7, char *out, size_t out_len)
+{
+    uint32_t mag = (uint32_t)((deg_e7 < 0) ? -(int64_t)deg_e7 : (int64_t)deg_e7);
+    snprintf(out, out_len, "%s%lu.%06lu",
+             (deg_e7 < 0) ? "-" : "",
+             (unsigned long)(mag / 10000000UL),
+             (unsigned long)((mag % 10000000UL) / 10UL));
+}
+
+/* value*10 -> "[-]D.D" -- altitude in metres, and the three DOPs. */
+static void format_x10(int32_t v_x10, char *out, size_t out_len)
+{
+    uint32_t mag = (uint32_t)((v_x10 < 0) ? -(int64_t)v_x10 : (int64_t)v_x10);
+    snprintf(out, out_len, "%s%lu.%lu",
+             (v_x10 < 0) ? "-" : "",
+             (unsigned long)(mag / 10UL),
+             (unsigned long)(mag % 10UL));
+}
+
 /* Direct AT+CGNSSINFO query, 1 Hz poll. */
 static bool raw_gnss_query(String &response)
 {
@@ -431,12 +462,38 @@ static void gnss_matcher_task(void *arg)
          * matcher -- so GNSS acquisition health is visible/verifiable on
          * its own, before trusting the matcher's SEG_DONE output. */
         uint32_t now_s = (fix.utc_epoch_s != 0) ? fix.utc_epoch_s : (uint32_t)(millis() / 1000);
-        char raw_json[160];
+
+        char lat_s[16], lon_s[16], alt_s[12];
+        char pdop_s[8], hdop_s[8], vdop_s[8];
+        char date_s[11], time_s[9];
+
+        format_deg_e7(fix.lat_e7, lat_s, sizeof(lat_s));
+        format_deg_e7(fix.lon_e7, lon_s, sizeof(lon_s));
+        format_x10(fix.alt_m_x10, alt_s, sizeof(alt_s));
+        format_x10(fix.pdop_x10, pdop_s, sizeof(pdop_s));
+        format_x10(fix.hdop_x10, hdop_s, sizeof(hdop_s));
+        format_x10(fix.vdop_x10, vdop_s, sizeof(vdop_s));
+
+        /* Date/time come from the fix's OWN UTC fields, shifted to SGT.
+         * If those didn't parse (utc_epoch_s == 0) emit empty strings
+         * rather than a bogus 1970 date -- now_s falls back to millis()
+         * for the matcher, but millis() is not a wall clock and must
+         * never be rendered as one. */
+        if (fix.utc_epoch_s != 0) {
+            gnss_format_datetime(fix.utc_epoch_s, GNSS_TZ_OFFSET_S_SINGAPORE,
+                                 date_s, sizeof(date_s), time_s, sizeof(time_s));
+        } else {
+            date_s[0] = '\0';
+            time_s[0] = '\0';
+        }
+
+        char raw_json[256];
         snprintf(raw_json, sizeof(raw_json),
-            "{\"v\":1,\"ev\":\"GNSS_RAW\",\"t\":%lu,\"lat_e7\":%ld,\"lon_e7\":%ld,"
-            "\"hdop_x10\":%d,\"nsv\":%u,\"speed_mmps\":%lu}",
-            (unsigned long)now_s, (long)fix.lat_e7, (long)fix.lon_e7,
-            (int)fix.hdop_x10, (unsigned)fix.nsv, (unsigned long)fix.speed_mmps);
+            "{\"v\":1,\"ev\":\"GNSS_RAW\",\"date\":\"%s\",\"sgt\":\"%s\","
+            "\"lat\":%s,\"lon\":%s,\"alt_m\":%s,"
+            "\"pdop\":%s,\"hdop\":%s,\"vdop\":%s,\"nsv\":%u}",
+            date_s, time_s, lat_s, lon_s, alt_s,
+            pdop_s, hdop_s, vdop_s, (unsigned)fix.nsv);
         Serial.println(raw_json);
         sd_log_raw_json(raw_json);
 

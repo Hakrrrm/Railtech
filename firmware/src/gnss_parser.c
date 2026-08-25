@@ -155,10 +155,73 @@ int gnss_parse_cgnssinfo(const char *raw, gnss_fix_t *out)
     double speed_mmps = speed_knots * 514.444; /* 1 knot = 0.514444 m/s */
     out->speed_mmps = (speed_mmps < 0.0) ? 0 : (uint32_t)round_half_up(speed_mmps);
 
+    /* Field indices below are the manual's own (Sec 21.2.21), verified
+     * against its worked example: [11]=alt, [14]=PDOP, [15]=HDOP,
+     * [16]=VDOP. */
+    double alt = strtod(fields[11], NULL);
+    out->alt_m_x10 = (int32_t)round_half_up(alt * 10.0);
+
+    double pdop = strtod(fields[14], NULL);
+    out->pdop_x10 = (int16_t)round_half_up(pdop * 10.0);
+
     double hdop = strtod(fields[15], NULL);
     out->hdop_x10 = (int16_t)round_half_up(hdop * 10.0);
 
+    double vdop = strtod(fields[16], NULL);
+    out->vdop_x10 = (int16_t)round_half_up(vdop * 10.0);
+
     parse_epoch(fields[9], fields[10], &out->utc_epoch_s);
 
+    return 0;
+}
+
+/* Howard Hinnant's civil_from_days -- exact inverse of days_from_civil
+ * above, same proleptic Gregorian algorithm. */
+static void civil_from_days(int64_t z, int *y, unsigned *m, unsigned *d)
+{
+    z += 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);                    /* [0, 146096] */
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; /* [0, 399] */
+    int64_t yr = (int64_t)yoe + era * 400;
+    unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);         /* [0, 365] */
+    unsigned mp = (5 * doy + 2) / 153;                              /* [0, 11] */
+    unsigned dy = doy - (153 * mp + 2) / 5 + 1;                     /* [1, 31] */
+    unsigned mo = (mp < 10) ? (mp + 3) : (mp - 9);                  /* [1, 12] */
+
+    *y = (int)(yr + (mo <= 2));
+    *m = mo;
+    *d = dy;
+}
+
+int gnss_format_datetime(uint32_t utc_epoch_s, int32_t offset_s,
+                         char *date_out, size_t date_len,
+                         char *time_out, size_t time_len)
+{
+    if (date_out == NULL || time_out == NULL || date_len < 11 || time_len < 9) {
+        if (date_out != NULL && date_len > 0) date_out[0] = '\0';
+        if (time_out != NULL && time_len > 0) time_out[0] = '\0';
+        return -1;
+    }
+
+    int64_t local = (int64_t)utc_epoch_s + (int64_t)offset_s;
+
+    /* Floor-divide, so a negative local time (pre-1970, only reachable
+     * with a large negative offset on a near-zero epoch) still floors
+     * toward the earlier day rather than truncating toward zero. */
+    int64_t days = local / 86400;
+    int64_t secs = local % 86400;
+    if (secs < 0) {
+        secs += 86400;
+        days -= 1;
+    }
+
+    int y;
+    unsigned mo, d;
+    civil_from_days(days, &y, &mo, &d);
+
+    snprintf(date_out, date_len, "%04d-%02u-%02u", y, mo, d);
+    snprintf(time_out, time_len, "%02u:%02u:%02u",
+             (unsigned)(secs / 3600), (unsigned)((secs / 60) % 60), (unsigned)(secs % 60));
     return 0;
 }
