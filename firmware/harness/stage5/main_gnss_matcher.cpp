@@ -84,6 +84,7 @@ extern "C" {
 #define SAMPLE_INTERVAL_MS 1000UL /* 1 Hz, TDD */
 #define RAW_GPS_TIMEOUT_MS 800UL
 #define IMU_SAMPLE_INTERVAL_MS 50UL /* 20 Hz -- decoupled from GNSS's 1 Hz, see imu_task */
+#define IMU_HEARTBEAT_INTERVAL_MS 10000UL /* periodic "still alive, state is X" line, see imu_task */
 
 /* Written only by imu_task, read only by gnss_matcher_task -- a single
  * bool is a single-instruction load/store on this MCU, so `volatile`
@@ -401,9 +402,12 @@ static void imu_task(void *arg)
                              * false (moving), so gnss_matcher_task just always polls */
     }
 
+    Serial.println("[imu] MPU6050 init ok, sampling at 20 Hz");
+
     imu_state_t imu_st;
     imu_state_reset(&imu_st);
     bool was_stationary = false;
+    unsigned long last_heartbeat_ms = 0;
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(IMU_SAMPLE_INTERVAL_MS));
@@ -420,6 +424,21 @@ static void imu_task(void *arg)
                 ? "[imu] stationary -- skipping GNSS polling until motion resumes"
                 : "[imu] motion detected -- resuming GNSS polling");
             was_stationary = stationary;
+            last_heartbeat_ms = millis(); /* transition just reported the state; don't
+                                            * immediately repeat it as a heartbeat */
+            continue;
+        }
+
+        /* Transition-only logging is silent whenever the classification
+         * holds steady -- which is most of the time, and is
+         * indistinguishable on the monitor from "the IMU task never
+         * started at all". A low-rate heartbeat makes the current state
+         * (and the fact that the task is alive) observable without
+         * flooding the 20 Hz loop into the log. */
+        unsigned long now_ms = millis();
+        if (now_ms - last_heartbeat_ms >= IMU_HEARTBEAT_INTERVAL_MS) {
+            Serial.printf("[imu] state=%s (heartbeat)\n", stationary ? "stationary" : "moving");
+            last_heartbeat_ms = now_ms;
         }
     }
 #else
