@@ -86,6 +86,22 @@ extern "C" {
 #define IMU_SAMPLE_INTERVAL_MS 50UL /* 20 Hz -- decoupled from GNSS's 1 Hz, see imu_task */
 #define IMU_HEARTBEAT_INTERVAL_MS 10000UL /* periodic "still alive, state is X" line, see imu_task */
 
+/* Fix-quality gate, applied before the fix is allowed to move the map
+ * matcher. PDOP is the primary figure: it describes the 3D solution
+ * geometry, so it is the one that actually says whether the position is
+ * trustworthy -- HDOP only characterises the horizontal component and
+ * can look healthy while the overall solution is poor. Standard DOP
+ * bands put <=2 excellent, 2-5 good, 5-10 moderate, >10 fair-to-poor;
+ * 6.0 sits at the "still usable on a partly-obstructed campus loop"
+ * end of that. The HDOP limit is a much looser backstop for the
+ * pathological horizontal outlier.
+ *
+ * A rejected fix is not discarded quietly -- it counts as a miss inside
+ * the matcher, which is exactly what escalates a run of bad fixes into
+ * the blackout re-acquisition path (map_matcher.h). */
+#define GNSS_MAX_PDOP_X10 60  /* PDOP 6.0 */
+#define GNSS_MAX_HDOP_X10 100 /* HDOP 10.0 -- backstop only */
+
 /* Written only by imu_task, read only by gnss_matcher_task -- a single
  * bool is a single-instruction load/store on this MCU, so `volatile`
  * (defeats compiler caching across loop iterations) is enough here
@@ -99,6 +115,8 @@ struct SegDoneMsg {
     char        dir;
     int32_t     d_mm;
     uint16_t    dwell_s;
+    uint8_t     inferred; /* 1 = credited from map geometry across a GNSS
+                           * blackout rather than directly observed */
     int16_t     hdop_x10;
     uint8_t     nsv;
     uint32_t    t; /* unix epoch seconds, from the fix that completed this segment */
@@ -521,6 +539,17 @@ static void gnss_matcher_task(void *arg)
         Serial.println(raw_json);
         sd_log_raw_json(raw_json);
 
+        /* Quality gate. Deliberately AFTER the GNSS_RAW print above, so
+         * a rejected fix is still visible on the monitor and in
+         * gnss_raw.ndjson -- being able to see that the receiver is
+         * producing poor fixes (rather than none) is most of the
+         * diagnosis when mileage looks wrong. */
+        if (fix.pdop_x10 > GNSS_MAX_PDOP_X10 || fix.hdop_x10 > GNSS_MAX_HDOP_X10) {
+            Serial.printf("[gnss] fix rejected on quality (pdop=%s, hdop=%s) -- not fed to matcher\n",
+                           pdop_s, hdop_s);
+            continue;
+        }
+
         map_matcher_event_t ev;
         int fired = map_matcher_update(&matcher_st, TRACK_SEGMENTS, TRACK_NUM_SEGMENTS,
                                         &TRACK_NEXT_FWD[0][0], TRACK_NEXT_FWD_COUNT,
@@ -529,19 +558,26 @@ static void gnss_matcher_task(void *arg)
             continue;
         }
 
-        SegDoneMsg msg;
-        msg.seg_id = ev.seg_id;
-        msg.dir = ev.dir;
-        msg.d_mm = ev.d_mm;
-        msg.dwell_s = ev.dwell_s;
-        msg.hdop_x10 = fix.hdop_x10;
-        msg.nsv = fix.nsv;
-        msg.t = now_s;
-        msg.t_is_wall_clock = (fix.utc_epoch_s != 0);
+        /* One update can establish several completed segments when it
+         * bridges a GNSS blackout: the observed one is returned above,
+         * any segments credited from the map geometry are drained here.
+         * Skipping the drain would silently lose those traversals. */
+        do {
+            SegDoneMsg msg;
+            msg.seg_id = ev.seg_id;
+            msg.dir = ev.dir;
+            msg.d_mm = ev.d_mm;
+            msg.dwell_s = ev.dwell_s;
+            msg.inferred = ev.inferred;
+            msg.hdop_x10 = fix.hdop_x10;
+            msg.nsv = fix.nsv;
+            msg.t = now_s;
+            msg.t_is_wall_clock = (fix.utc_epoch_s != 0);
 
-        if (xQueueSend(s_matcher_queue, &msg, 0) != pdTRUE) {
-            Serial.println("[matcher] queue full, dropping SEG_DONE");
-        }
+            if (xQueueSend(s_matcher_queue, &msg, 0) != pdTRUE) {
+                Serial.println("[matcher] queue full, dropping SEG_DONE");
+            }
+        } while (map_matcher_take_pending(&matcher_st, TRACK_SEGMENTS, &ev));
     }
 }
 
@@ -589,7 +625,8 @@ static void handle_seg_done(const SegDoneMsg &m)
         date_s[0] = '\0';
         time_s[0] = '\0';
     }
-    Serial.printf("{\"date\":\"%s\",\"sgt\":\"%s\"}\n", date_s, time_s);
+    Serial.printf("{\"date\":\"%s\",\"sgt\":\"%s\",\"src\":\"%s\"}\n",
+                   date_s, time_s, m.inferred ? "inferred" : "measured");
 
     Serial.println(json);
     sd_log_json(json);
