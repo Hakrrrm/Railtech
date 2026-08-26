@@ -68,6 +68,29 @@ of each. The generated `track_data.h` `#include`s the committed
 them, so `map_matcher.c` (and its host tests) can operate on the same
 types without depending on any one generated dataset.
 
+### Uploading your own track data
+
+Drop your GeoJSON + loop-lengths CSV anywhere in the repo (the project
+root, alongside `track.dummy.geojson`/`loop_lengths.dummy.csv`, is the
+usual spot) -- `--geojson`/`--loop-lengths` take any path, so your own
+filenames (e.g. `Track_sections.geojson`, `Loop_length.csv`) work as-is,
+no renaming required. Just point the two flags at whatever you uploaded:
+
+```
+python3 tools/track_pipeline.py \
+    --geojson Track_sections.geojson \
+    --loop-lengths Loop_length.csv \
+    --out-dir firmware/src/
+```
+
+Two names you *can't* change: the pipeline always writes its output as
+`firmware/src/segments.csv` and `firmware/src/track_data.h` (fixed by
+`--out-dir` + hardcoded basenames in `track_pipeline.py`), and
+`firmware/harness/stage5/main_gnss_matcher.cpp` `#include`s
+`track_data.h` by that exact name -- so every run simply overwrites
+whatever track dataset was committed there before, regardless of what
+you named your input files.
+
 ## Build stages
 
 See `Firmware_Cloud_Build_Plan_v1.0` for the authoritative stage order and
