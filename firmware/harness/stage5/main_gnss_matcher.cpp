@@ -101,6 +101,11 @@ struct SegDoneMsg {
     int16_t     hdop_x10;
     uint8_t     nsv;
     uint32_t    t; /* unix epoch seconds, from the fix that completed this segment */
+    bool        t_is_wall_clock; /* false if t fell back to millis()/1000 -- see
+                                   * gnss_matcher_task's now_s comment. Internal
+                                   * only, never serialised; guards the Serial-only
+                                   * SGT print in handle_seg_done() from rendering
+                                   * a bogus 1970 date off a non-epoch value. */
 };
 
 static QueueHandle_t s_matcher_queue;
@@ -513,6 +518,7 @@ static void gnss_matcher_task(void *arg)
         msg.hdop_x10 = fix.hdop_x10;
         msg.nsv = fix.nsv;
         msg.t = now_s;
+        msg.t_is_wall_clock = (fix.utc_epoch_s != 0);
 
         if (xQueueSend(s_matcher_queue, &msg, 0) != pdTRUE) {
             Serial.println("[matcher] queue full, dropping SEG_DONE");
@@ -550,6 +556,21 @@ static void handle_seg_done(const SegDoneMsg &m)
         Serial.println("[serialize FAIL] evt_serialize_seg_done rejected the event");
         return;
     }
+
+    /* Serial-only human-readable SGT stamp, same date/time format and
+     * conversion as the GNSS_RAW line -- NOT part of the Tier 1 JSON
+     * contract above (that stays frozen, byte-for-byte, for the ingest
+     * bridge). Empty if m.t was a millis() fallback rather than a real
+     * epoch (m.t_is_wall_clock == false) -- never render a fallback
+     * clock value as if it were a wall-clock date. */
+    char date_s[11], time_s[9];
+    if (m.t_is_wall_clock) {
+        gnss_format_datetime(m.t, GNSS_TZ_OFFSET_S_SINGAPORE, date_s, sizeof(date_s), time_s, sizeof(time_s));
+    } else {
+        date_s[0] = '\0';
+        time_s[0] = '\0';
+    }
+    Serial.printf("{\"date\":\"%s\",\"sgt\":\"%s\"}\n", date_s, time_s);
 
     Serial.println(json);
     sd_log_json(json);
