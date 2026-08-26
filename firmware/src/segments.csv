@@ -1,3 +1,7 @@
 seg_id,order,loop,from,to,length_m,bidir
-DUMMY_A_B,0,dummy_loop,A,B,33,1
-DUMMY_B_C,1,dummy_loop,B,C,34,1
+NTU_ACW_North_Hill_Hall_9,0,NTU ACW,North Hill,Hall 9,530,1
+NTU_ACW_Hall_9_ADM,1,NTU ACW,Hall 9,ADM,262,1
+NTU_ACW_ADM_Crespion,2,NTU ACW,ADM,Crespion,576,1
+NTU_ACW_Crespion_SRC,3,NTU ACW,Crespion,SRC,641,1
+NTU_ACW_SRC_Kindergarten,4,NTU ACW,SRC,Kindergarten,432,1
+NTU_ACW_Kindergarten_North_Hill,5,NTU ACW,Kindergarten,North Hill,232,1
