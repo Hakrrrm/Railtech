@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-/* NVS namespace "odo", keys "seq" and "odo_m" (build plan Sec 10).
+/* NVS namespace "odo", keys "seq" and "odo_mm" (build plan Sec 10).
  * Write policy: commit on segment completion only, never timer-based.
  * Commit-before-publish is enforced by the caller: a failed
  * seq_store_commit() MUST block publication of that event. */
@@ -15,17 +15,22 @@ void seq_store_init(void);
 /* Last committed sequence number (0 if never committed). */
 uint32_t seq_store_get_seq(void);
 
-/* Last committed odometer, integer metres (0 if never committed). */
-int64_t seq_store_get_odo_m(void);
+/* Last committed odometer, integer MILLIMETRES (0 if never committed).
+ * Millimetres rather than metres so a segment's calibrated length is
+ * accumulated exactly: rounding each segment to whole metres put a fixed
+ * (per-segment, not random) error of up to +/-0.5 m on every traversal,
+ * which accumulates linearly instead of cancelling. A device carrying
+ * only the older integer-metre NVS key is migrated on init. */
+int64_t seq_store_get_odo_mm(void);
 
 /*
- * Commits new_seq and new_odo_m to persistent storage. Must be called,
+ * Commits new_seq and new_odo_mm to persistent storage. Must be called,
  * and must succeed, before the corresponding event is published over
  * MQTT (commit-before-publish, non-negotiable: TDD Sec 5.6/5.7, build
  * plan Sec 2). Returns 0 on success, -1 on failure -- the caller MUST
  * NOT publish the event on failure.
  */
-int seq_store_commit(uint32_t new_seq, int64_t new_odo_m);
+int seq_store_commit(uint32_t new_seq, int64_t new_odo_mm);
 
 #ifdef SEQ_STORE_HOST_STUB
 /* Host-test-only surface. Not compiled into the target build. */

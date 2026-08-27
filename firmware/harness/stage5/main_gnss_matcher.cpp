@@ -586,9 +586,14 @@ static void gnss_matcher_task(void *arg)
 static void handle_seg_done(const SegDoneMsg &m)
 {
     uint32_t new_seq = seq_store_get_seq() + 1;
-    int64_t new_odo_m = seq_store_get_odo_m() + (m.d_mm + 500) / 1000; /* mm -> m, half-up */
+    /* Accumulate the segment's calibrated length EXACTLY, in millimetres.
+     * This used to round to whole metres per segment, which put a fixed
+     * (not random) error of up to +/-0.5 m on every traversal of a given
+     * segment -- errors that therefore accumulate linearly under any
+     * asymmetric duty cycle instead of cancelling. */
+    int64_t new_odo_mm = seq_store_get_odo_mm() + m.d_mm;
 
-    if (seq_store_commit(new_seq, new_odo_m) != 0) {
+    if (seq_store_commit(new_seq, new_odo_mm) != 0) {
         Serial.println("[commit FAIL] NVS commit failed -- event NOT logged (commit-before-publish)");
         return;
     }
@@ -600,7 +605,7 @@ static void handle_seg_done(const SegDoneMsg &m)
     ev.seg_id = m.seg_id;
     ev.dir = m.dir;
     ev.d_mm = m.d_mm;
-    ev.odo_m = new_odo_m;
+    ev.odo_mm = new_odo_mm;
     ev.hdop_x10 = m.hdop_x10;
     ev.nsv = m.nsv;
     ev.dwell_s = m.dwell_s;

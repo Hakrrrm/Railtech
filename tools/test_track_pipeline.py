@@ -96,8 +96,15 @@ def test_happy_path_option_a():
         with open(os.path.join(out_dir, "segments.csv"), newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 4
-        total = sum(int(r["length_m"]) for r in rows)
-        assert total == 200, f"post-calibration total should be exactly 200, got {total}"
+        total = sum(float(r["length_m"]) for r in rows)
+        assert abs(total - 200) < 1e-6, f"post-calibration total should be exactly 200, got {total}"
+
+        # Sub-metre precision must survive calibration. Allocating in whole
+        # metres (as this once did) gave every segment a fixed rounding
+        # error of up to +/-0.5 m -- the same error on every traversal, so
+        # it accumulates linearly rather than cancelling.
+        assert any("." in r["length_m"] and not r["length_m"].endswith(".000") for r in rows), \
+            f"calibrated lengths lost their sub-metre part: {[r['length_m'] for r in rows]}"
 
         with open(os.path.join(out_dir, "track_data.h"), encoding="utf-8") as f:
             header = f.read()
@@ -119,9 +126,9 @@ def test_pinned_segment_excluded_from_scaling():
 
         tp.run(geojson_path, loop_lengths_path, out_dir, None)
         with open(os.path.join(out_dir, "segments.csv"), newline="", encoding="utf-8") as f:
-            rows = {r["seg_id"]: int(r["length_m"]) for r in csv.DictReader(f)}
-        assert rows["A_B"] == 50, f"pinned segment must keep its len_m, got {rows['A_B']}"
-        assert sum(rows.values()) == 200
+            rows = {r["seg_id"]: float(r["length_m"]) for r in csv.DictReader(f)}
+        assert abs(rows["A_B"] - 50) < 1e-6, f"pinned segment must keep its len_m, got {rows['A_B']}"
+        assert abs(sum(rows.values()) - 200) < 1e-6
     print("[ok] pinned len_m segment excluded from proportional scaling")
 
 

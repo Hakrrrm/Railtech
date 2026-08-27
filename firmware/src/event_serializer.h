@@ -20,7 +20,13 @@ typedef struct {
     const char *seg_id;   /* segment id, e.g. "PE3_PE4_E" */
     char        dir;      /* confirmed direction, one of EVT_VALID_DIRS */
     int32_t     d_mm;     /* length of segment just completed, millimetres */
-    int64_t     odo_m;    /* cumulative odometer after this segment, metres */
+    int64_t     odo_mm;   /* cumulative odometer after this segment, MILLIMETRES.
+                           * Millimetres, not metres, so no rounding to whole
+                           * metres ever happens between a segment's calibrated
+                           * length and the running total. A per-segment rounding
+                           * error is fixed for a given segment, not random, so it
+                           * accumulates linearly rather than cancelling. The
+                           * rendered "odo_km" field is unaffected. */
     int16_t     hdop_x10; /* HDOP, fixed-point, actual value x10 */
     uint8_t     nsv;      /* satellites used in fix */
     uint16_t    dwell_s;  /* dwell time at the preceding stop, seconds */

@@ -565,12 +565,12 @@ static const track_point_t track_pts_5[47] = {
 };
 
 static const track_segment_t TRACK_SEGMENTS[TRACK_NUM_SEGMENTS] = {
-    { "NTU_ACW_North_Hill_Hall_9", "North Hill", "Hall 9", 0, 1, 530000, 107, track_pts_0 },
-    { "NTU_ACW_Hall_9_ADM", "Hall 9", "ADM", 0, 1, 262000, 53, track_pts_1 },
-    { "NTU_ACW_ADM_Crespion", "ADM", "Crespion", 0, 1, 576000, 116, track_pts_2 },
-    { "NTU_ACW_Crespion_SRC", "Crespion", "SRC", 0, 1, 641000, 129, track_pts_3 },
-    { "NTU_ACW_SRC_Kindergarten", "SRC", "Kindergarten", 0, 1, 432000, 87, track_pts_4 },
-    { "NTU_ACW_Kindergarten_North_Hill", "Kindergarten", "North Hill", 0, 1, 232000, 47, track_pts_5 },
+    { "NTU_ACW_North_Hill_Hall_9", "North Hill", "Hall 9", 0, 1, 530319, 107, track_pts_0 },
+    { "NTU_ACW_Hall_9_ADM", "Hall 9", "ADM", 0, 1, 261997, 53, track_pts_1 },
+    { "NTU_ACW_ADM_Crespion", "ADM", "Crespion", 0, 1, 575905, 116, track_pts_2 },
+    { "NTU_ACW_Crespion_SRC", "Crespion", "SRC", 0, 1, 640645, 129, track_pts_3 },
+    { "NTU_ACW_SRC_Kindergarten", "SRC", "Kindergarten", 0, 1, 432061, 87, track_pts_4 },
+    { "NTU_ACW_Kindergarten_North_Hill", "Kindergarten", "North Hill", 0, 1, 231973, 47, track_pts_5 },
 };
 
 /* Reachable next segments, forward direction (this.to == next.from). */

@@ -113,11 +113,15 @@ class Segment:
     bidir: bool
     coords: List[Coord]
     pinned_len_m: Optional[float] = None
-    length_m: float = field(init=False, default=0.0)  # filled after calibration
+    length_mm: int = field(init=False, default=0)  # filled after calibration
 
     @property
     def raw_length_m(self) -> float:
         return polyline_length_m(self.coords)
+
+    @property
+    def length_m(self) -> float:
+        return self.length_mm / 1000.0
 
 
 # --------------------------------------------------------------------------
@@ -402,21 +406,37 @@ def calibrate(segments: List[Segment], loop_lengths: Dict[str, float]) -> None:
             )
         target_m = loop_lengths[loop]
 
+        # Everything below is integer MILLIMETRES. The calibrated length
+        # reaches the firmware as track_segment_t.length_mm and is
+        # reported as SEG_DONE's d_m to one decimal, so allocating in
+        # whole metres here (as this did originally) threw away the
+        # tenths before the header was ever written -- every traversal of
+        # a given segment then carried the same fixed rounding error, up
+        # to +/-0.5 m. Fixed rather than random is what makes it matter:
+        # errors that would cancel over random traversals instead
+        # accumulate linearly under any asymmetric duty cycle, which is
+        # exactly the regime where a small consistent bias is
+        # indistinguishable from real matcher error when comparing
+        # against hubometer anchors.
+        target_mm = int(round(target_m * 1000.0))
+
         pinned = [s for s in segs if s.pinned_len_m is not None]
         scalable = [s for s in segs if s.pinned_len_m is None]
-        pinned_total = sum(s.pinned_len_m for s in pinned)
-        remaining = target_m - pinned_total
+        pinned_total_mm = sum(int(round(s.pinned_len_m * 1000.0)) for s in pinned)
+        remaining_mm = target_mm - pinned_total_mm
         scalable_raw_total = sum(s.raw_length_m for s in scalable)
 
-        if remaining < 0:
+        if remaining_mm < 0:
             raise PipelineError(
-                f"loop '{loop}': pinned segment lengths already total {pinned_total:.1f} m, "
+                f"loop '{loop}': pinned segment lengths already total "
+                f"{pinned_total_mm / 1000.0:.1f} m, "
                 f"more than the authoritative {target_m:.1f} m"
             )
         if scalable and scalable_raw_total <= 0:
             raise PipelineError(f"loop '{loop}': scalable segments have zero total raw length, cannot calibrate")
 
-        residual_pct = 0.0 if target_m == 0 else abs(scalable_raw_total - remaining) / target_m * 100.0
+        remaining_m = remaining_mm / 1000.0
+        residual_pct = 0.0 if target_m == 0 else abs(scalable_raw_total - remaining_m) / target_m * 100.0
         if residual_pct > RESIDUAL_WARN_PCT:
             print(
                 f"WARNING: loop '{loop}' pre-calibration residual is {residual_pct:.1f}% "
@@ -425,18 +445,22 @@ def calibrate(segments: List[Segment], loop_lengths: Dict[str, float]) -> None:
             )
 
         for s in pinned:
-            s.length_m = round(s.pinned_len_m)
+            s.length_mm = int(round(s.pinned_len_m * 1000.0))
 
         if scalable:
-            scale = remaining / scalable_raw_total
-            raw_scaled = [(s, s.raw_length_m * scale) for s in scalable]
-            floors = [(s, math.floor(v), v - math.floor(v)) for s, v in raw_scaled]
+            scalable_raw_total_mm = scalable_raw_total * 1000.0
+            scale = remaining_mm / scalable_raw_total_mm
+            raw_scaled_mm = [(s, s.raw_length_m * 1000.0 * scale) for s in scalable]
+            floors = [(s, int(math.floor(v)), v - math.floor(v)) for s, v in raw_scaled_mm]
             total_floor = sum(f for _, f, _ in floors)
-            deficit = int(round(remaining)) - int(total_floor)
-            # largest-remainder method, deterministic tie-break by seg_id
+            # Largest-remainder method, now distributing whole
+            # millimetres, so the loop still sums to the authoritative
+            # total EXACTLY while each segment keeps its tenths.
+            # Deterministic tie-break by seg_id.
+            deficit = remaining_mm - total_floor
             floors.sort(key=lambda t: (-t[2], t[0].seg_id))
             for i, (s, f, _r) in enumerate(floors):
-                s.length_m = f + (1 if i < deficit else 0)
+                s.length_mm = f + (1 if i < deficit else 0)
 
 
 # --------------------------------------------------------------------------
@@ -448,7 +472,7 @@ def write_segments_csv(path: str, segments: List[Segment]) -> None:
         w = csv.writer(f)
         w.writerow(["seg_id", "order", "loop", "from", "to", "length_m", "bidir"])
         for s in sorted(segments, key=lambda s: (s.loop, s.order)):
-            w.writerow([s.seg_id, s.order, s.loop, s.frm, s.to, int(s.length_m), "1" if s.bidir else "0"])
+            w.writerow([s.seg_id, s.order, s.loop, s.frm, s.to, f"{s.length_m:.3f}", "1" if s.bidir else "0"])
 
 
 def c_string_literal(s: str) -> str:
@@ -493,7 +517,7 @@ def write_track_data_h(path: str, segments: List[Segment]) -> None:
         lines.append(
             f"    {{ {c_string_literal(s.seg_id)}, {c_string_literal(s.frm)}, "
             f"{c_string_literal(s.to)}, {loop_index[s.loop]}, {1 if s.bidir else 0}, "
-            f"{int(round(s.length_m * 1000))}, {len(pts)}, track_pts_{i} }},"
+            f"{s.length_mm}, {len(pts)}, track_pts_{i} }},"
         )
     lines.append("};")
     lines.append("")
@@ -549,7 +573,7 @@ def run(geojson_path: str, loop_lengths_path: str, out_dir: str, loop_name: Opti
         by_loop[s.loop] = by_loop.get(s.loop, 0.0) + s.length_m
     print(f"{len(by_loop)} loop(s) processed")
     for loop, total in sorted(by_loop.items()):
-        print(f"  loop '{loop}': total length_m = {total:.0f}")
+        print(f"  loop '{loop}': total length_m = {total:.3f}")
 
     os.makedirs(out_dir, exist_ok=True)
     segments_csv = os.path.join(out_dir, "segments.csv")
