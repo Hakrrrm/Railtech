@@ -91,6 +91,14 @@ redesign, not a config flag. Verified against the code as it stands
 (`map_matcher.c`, `track_pipeline.py`) rather than assumed -- see the
 line references below.
 
+**Verified against**: branch `main`, commit `db8e7ac` (the tip immediately
+before this note was added). If `map_matcher.c`, `track_pipeline.py`, or
+`track_types.h` have changed since, re-check the specific claims below
+against current source before relying on them -- the line-level behaviour
+described (loop-scoped `TRACK_NEXT_FWD`, the single-chain validation in
+`build_segments_option_a`, the loop-agnostic bootstrap/re-acquisition
+scan) is what was true at that commit, not a guarantee about later code.
+
 **What already works today, and why:**
 - Multiple independent loops can already coexist in one compiled
   dataset. `track_pipeline.py`'s `calibrate()` already groups segments
