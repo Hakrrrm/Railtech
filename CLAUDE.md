@@ -81,3 +81,108 @@ delta; whether the pending-command module should be its own
 `firmware/src/pending_cmd_store.c/.h` (host-testable like `seq_store`) or
 folded into `seq_store` itself; retry/backoff policy for the ack publish
 if the broker is unreachable for an extended period.
+
+## Future work: multi-branch/depot track topology
+
+Not yet built. The current matcher and track pipeline target a single
+loop or a simple point-to-point line; this is what a real depot network
+(one origin, several branch lines) would require and why it's a real
+redesign, not a config flag. Verified against the code as it stands
+(`map_matcher.c`, `track_pipeline.py`) rather than assumed -- see the
+line references below.
+
+**What already works today, and why:**
+- Multiple independent loops can already coexist in one compiled
+  dataset. `track_pipeline.py`'s `calibrate()` already groups segments
+  `by_loop` and calibrates each independently; `track_types.h`/
+  `track_data.h` already carry `TRACK_NUM_LOOPS`, `TRACK_LOOP_NAMES[]`,
+  and a `loop_id` per segment. Nothing stops `track.geojson` from
+  declaring a second `"loop"` name today.
+- The matcher's bootstrap match (`st->cur_seg_idx < 0`) and the
+  blackout re-acquisition path (`consecutive_miss >=
+  MAP_MATCHER_REACQUIRE_MISSES`) both scan every segment across every
+  loop with no loop filter -- so a vehicle that physically moved from
+  one loop to an unrelated one will eventually be found there, as a
+  side effect of the blackout-bridging work, not by original design.
+  It re-bootstraps silently rather than fabricating an inferred
+  traversal across the gap (`find_forward_path`'s BFS only walks
+  same-loop `next_fwd` edges, so a cross-loop reappearance always finds
+  no path and correctly credits nothing).
+
+**What's actually missing for a real depot/branch network:**
+1. **Steady-state tracking never crosses loops.** Forward adjacency
+   (`TRACK_NEXT_FWD`) is built in `track_pipeline.py` filtered to
+   `o.loop == s.loop` only; the matcher's reverse-neighbour scan in
+   `map_matcher.c` has the same `loop_id` filter. While locked onto a
+   segment, another loop's segments are never candidates, however close
+   they are physically.
+2. **The pipeline's validation model is a single chain, not a graph.**
+   `build_segments_option_a` requires `order` to be contiguous 0..N-1
+   and walks consecutive pairs asserting segment i's end coordinate is
+   adjacent to segment i+1's start (plus one wraparound check for
+   closure). This is one path or one ring -- there is no way to express
+   a branch point (one node with 3+ outgoing segments) inside a single
+   "loop" today. A depot with three lines would have to be three
+   separate loops that merely happen to share a coordinate, and per
+   point 1 above, those loops would NOT be connected in
+   `TRACK_NEXT_FWD` even though they physically meet.
+3. **Junction disambiguation is a real algorithmic gap, not just a data
+   problem.** `nearest_on_segment()` is pure point-to-polyline
+   distance. Right at a fork, every branch's polyline starts at
+   (near enough) the same coordinate, so all candidate branches have
+   near-zero, barely-distinguishable distance error at the moment of
+   the fork. There's no "wait for more evidence before committing"
+   state -- the matcher would pick whichever candidate wins the
+   comparison first, which right at a shared point is close to
+   arbitrary. Real disambiguation needs the vehicle to travel some
+   minimum chainage down one specific branch before the geometry
+   actually diverges enough to be confident.
+
+**Rough scope, if this gets built:**
+- Cross-loop adjacency: small, mechanical -- drop the `o.loop ==
+  s.loop` filter in `track_pipeline.py`'s `TRACK_NEXT_FWD` builder and
+  in `map_matcher.c`'s reverse-scan filter. The matcher's forward-
+  neighbour lookup itself doesn't care about loop_id at all; the
+  restriction lives only in those two specific filters.
+- Relaxing the pipeline to allow real branch points: moderate, not
+  small. The order-contiguity and endpoint-continuity validation is
+  built entirely around "one sequential chain," and a good chunk of
+  `test_track_pipeline.py`'s fixtures assume that shape. This is a real
+  schema/validation redesign (loop -> network with junction nodes), not
+  a tweak.
+- Junction disambiguation (a short "tentative match" state that only
+  promotes to a real crossing after a minimum chainage past the fork):
+  the newest, most design-sensitive piece. Order of magnitude: a
+  focused, testable addition (new state field(s) + new host tests), not
+  a rewrite of the matcher.
+
+**Hardware/processing verdict: not the bottleneck, memory shape is.**
+`nearest_on_segment()` is cheap (one `cos()` per candidate segment, then
+simple per-point arithmetic at ~5 m resampled spacing, one `sqrt` only
+for the eventual winner) -- even a fairly large network (10 branches x
+10 segments x ~100 points = 10,000 point evaluations for a full
+re-acquisition scan) is a few hundred thousand flops, comfortably
+sub-millisecond on the ESP32-S3's 240 MHz dual-core Xtensa with hardware
+FPU. Steady-state per-second cost is far smaller (bounded to the current
+segment plus its few neighbours).
+
+The one real scaling concern is `TRACK_NEXT_FWD[TRACK_NUM_SEGMENTS]
+[TRACK_NUM_SEGMENTS]` -- a DENSE `int16_t` matrix, O(N^2) in the TOTAL
+segment count across the whole compiled dataset, not per loop. Fine
+today (6 segments); at ~500 total segments across a depot network
+that's 500 KB, at ~1000 it's 2 MB. Should sit in flash (`.rodata`,
+XIP-mapped, this board has 16 MB) rather than the much smaller internal
+SRAM, but that placement should be CONFIRMED, not assumed, once this is
+real. Either way it's a wasteful representation for what's actually a
+sparse graph (most segments have 0-2 neighbours) -- worth switching to
+a small fixed-size per-segment neighbour list (bounded to e.g. 4)
+instead of a dense N x N table once the network grows into the
+hundreds of total segments. That swap is itself contained, not a
+redesign.
+
+**Bottom line:** for a realistic single-depot, few-branch network with
+segment counts in the tens, none of the above is a hardware constraint
+-- it's entirely a software/data-model design question. The compute and
+flash budget only start to matter if the combined network grows into
+the hundreds of total segments, and even then the fix (sparse adjacency)
+is a contained change, not a rewrite.
