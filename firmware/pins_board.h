@@ -16,6 +16,20 @@
  * The SD_SPI_* pins below are the exception: the Stage 3 harness now
  * also does Stage 6 SD logging, so those four are load-bearing today.
  *
+ * QWIIC_I2C_*_PIN: RESOLVED. The Standard board's KiCad schematic
+ * (T-A7670X-S3-Standard Rev1.0) confirmed a dedicated Qwiic-I2C
+ * connector (CN4, with its own 10k pull-ups) exists -- the MPU6050 just
+ * plugs into it, no manual wiring -- but flattened PDF text extraction
+ * couldn't recover which two ESP32-S3 GPIOs back that connector's
+ * SDA/SCL nets. Resolved instead from LilyGo's own QWIIC_I2C_Scan.ino
+ * example, which hardcodes SDA=IO3/SCL=IO2 "by default" for "Standard
+ * Series" boards (this board's exact family) -- the same class of
+ * working-reference-sketch source already used for the modem UART pins
+ * above and MODEM_GPS_MODE/GNSS enable. That sketch also shows a second,
+ * independent I2C bus available by repurposing the Qwiic-UART
+ * connector's TX/RX (IO43/IO44) via Wire1 -- unused here, noted for
+ * later if a second I2C device is ever needed.
+ *
  * PSRAM: RESOLVED, confirmed three independent ways -- the board id
  * itself (N16R2), LilyGo's KiCad schematic for the shared Standard-series
  * PCB (T-A7670X-S3-Standard Rev1.0, labelled "SIM7670G/A7670X
@@ -52,16 +66,19 @@
 #define MODEM_POWERON_PULSE_WIDTH_MS 100
 #define MODEM_START_WAIT_MS         3000
 
-/* GNSS enable, via AT+CGNSSPWR-style GPIO control on the modem itself
- * (not an ESP32 GPIO) -- level convention as used in the reference
- * example's modem.enableGPS(gpio, level) call. */
+/* GNSS constellation mode for AT+CGNSSMODE: GPS + GLONASS + Galileo +
+ * BeiDou, per TDD D12 ("enable every constellation the receiver
+ * supports"). */
+#define MODEM_GPS_MODE 15
+
+/* GNSS antenna power: the MODEM's own GPIO1 (not an ESP32 pin) drives
+ * the GNSS_ANT_PWR net on the schematic -- the active antenna's power
+ * rail. Driven via AT+CGDRT/AT+CGSETV during bring-up; level 1 = on.
+ * Same (gpio, level) pair the reference sketches pass to
+ * modem.enableGPS(1, 1). Without this the antenna is unpowered and no
+ * fix ever arrives, with every AT command still reporting success. */
 #define MODEM_GPS_ENABLE_GPIO  1
 #define MODEM_GPS_ENABLE_LEVEL 1
-
-/* GNSS constellation mode for AT+CGNSSMODE / modem.setGPSMode(): GPS +
- * GLONASS + Galileo + BeiDou, per TDD D12 ("enable every constellation
- * the receiver supports"). */
-#define MODEM_GPS_MODE 15
 
 /* microSD card, SPI bus (Stage 6, store-and-forward logging). Confirmed
  * against the board schematic by the user directly (CS = IO10); MOSI/
@@ -71,5 +88,10 @@
 #define SD_SPI_SCLK_PIN 12
 #define SD_SPI_MISO_PIN 13
 #define SD_SPI_CS_PIN   10
+
+/* Qwiic I2C (Stage 5, MPU6050 IMU). Confirmed via LilyGo's own
+ * QWIIC_I2C_Scan.ino example for this board family -- see note above. */
+#define QWIIC_I2C_SDA_PIN 3
+#define QWIIC_I2C_SCL_PIN 2
 
 #endif /* PINS_BOARD_H */

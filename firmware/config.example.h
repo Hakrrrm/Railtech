@@ -21,4 +21,11 @@
 #define MQTT_LRV_ID "D07"
 #define MQTT_FLEET  "splrt"
 
+/* Stage 5: gate GNSS polling on the MPU6050 stationary classifier
+ * (skip AT+CGNSSINFO while imu_state says stationary, to save modem
+ * cycles/power). Set to 0 to force GNSS to keep polling regardless of
+ * motion -- useful for bench testing while the board sits still on a
+ * desk. */
+#define IMU_ENABLED 1
+
 #endif /* CONFIG_H */

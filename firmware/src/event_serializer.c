@@ -33,7 +33,7 @@ int evt_serialize_seg_done(const evt_seg_done_t *ev, char *buf, size_t buflen)
     }
 
     int64_t d_m_x10 = round_div_nonneg(ev->d_mm, 100);       /* mm -> 0.1 m */
-    int64_t odo_km_x10 = round_div_nonneg(ev->odo_m, 100);   /* m -> 0.1 km */
+    int64_t odo_km_x10 = round_div_nonneg(ev->odo_mm, 100000); /* mm -> 0.1 km */
 
     long long d_m_whole = d_m_x10 / 10;
     int d_m_frac = (int)(d_m_x10 % 10);

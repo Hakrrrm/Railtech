@@ -10,24 +10,27 @@ prototype (SGRTGC 2026 Open Innovation Challenge). Companion documents:
 ```
 firmware/
   src/              pure-logic modules -- compile for host (gcc) and target (PlatformIO) alike
+                     (event_serializer, seq_store, gnss_parser, map_matcher, imu_state;
+                     track_types.h is the shared type-only header track_data.h #includes;
+                     imu_mpu6050.* is target-only, no host-testable logic there)
   test/             plain-C, assert-based host test programs, one per module
-  config.example.h  documents every config.h field (WiFi, MQTT, LRV id); copy to config.h (gitignored)
-  pins_board.h      modem UART/power/GNSS pin assignments, cited to LilyGo's own reference repo,
-                     plus the confirmed SD card SPI pins (Stage 6)
-  harness_stage3/   target-only sketches: the Stage 3 Wi-Fi hotspot harness, now also doing
-                     Stage 6 SD store-and-forward logging (one running /lrv_log/events.ndjson,
-                     appended to across every boot)
+  config.example.h  documents every config.h field (WiFi, MQTT, LRV id, IMU_ENABLED); copy to
+                     config.h (gitignored)
+  pins_board.h      modem UART/power/GNSS/SD/Qwiic-I2C pin assignments, each cited to its source
+                     (LilyGo reference sketches / user-confirmed schematic trace) in its own comments
+  harness/
+    stage3/         Stage 3 Wi-Fi hotspot harness, also doing Stage 6 SD store-and-forward
+                     logging (one running /lrv_log/events.ndjson, appended to across every boot)
+    stage5/         Stage 5: real GNSS (direct AT+CGNSSINFO, 1 Hz) + map matcher + optional
+                     IMU stationary gate. Serial + SD only, no Wi-Fi/MQTT (deferred to Stage 7)
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
-platformio.ini      PlatformIO project config
+platformio.ini      PlatformIO project config -- src_dir is project-global, so every harness
+                     stage lives under firmware/harness/<stage>/ with a per-env build_src_filter
+                     selecting just its own subfolder
 run_tests.sh        builds and runs the full host test suite; keep green at all times
 ```
-
-`firmware/pins_board.h` isn't used by anything in Stage 3 (Wi-Fi only,
-no external wiring) -- it's committed early because verified pin data
-became available (LilyGo's own reference example for this exact board
-variant), ahead of Stage 5/7 which will actually consume it.
 
 ## Running tests
 
@@ -35,10 +38,13 @@ variant), ahead of Stage 5/7 which will actually consume it.
 ./run_tests.sh
 ```
 
-Host tests cover the pure-logic modules only. The target build
-(`pio run -e stage3-wifi-hotspot`) additionally needs `firmware/config.h`
-(copy from `firmware/config.example.h`) and PlatformIO's ESP32 platform
-package, which requires network access to PlatformIO's registry.
+Host tests cover the pure-logic modules only. The target builds
+(`pio run -e stage3-wifi-hotspot` / `-e stage5-gnss-matcher`) additionally
+need `firmware/config.h` (copy from `firmware/config.example.h`) and
+PlatformIO's ESP32 platform package, which requires network access to
+PlatformIO's registry. `stage5-gnss-matcher` also needs a real
+`firmware/src/track_data.h`, generated per the next section -- it is
+intentionally not committed as a placeholder.
 
 ## Regenerating the track dataset
 
@@ -57,7 +63,33 @@ python3 tools/track_pipeline.py \
 The pipeline fails loudly (non-zero exit, specific `ERROR:` message naming
 the offending seg_id/coordinates) on every dataset rule violation in Build
 Plan Sec 4.2 -- see `tools/test_track_pipeline.py` for one worked example
-of each.
+of each. The generated `track_data.h` `#include`s the committed
+`firmware/src/track_types.h` for its struct types rather than redefining
+them, so `map_matcher.c` (and its host tests) can operate on the same
+types without depending on any one generated dataset.
+
+### Uploading your own track data
+
+Drop your GeoJSON + loop-lengths CSV anywhere in the repo (the project
+root, alongside `track.dummy.geojson`/`loop_lengths.dummy.csv`, is the
+usual spot) -- `--geojson`/`--loop-lengths` take any path, so your own
+filenames (e.g. `Track_sections.geojson`, `Loop_length.csv`) work as-is,
+no renaming required. Just point the two flags at whatever you uploaded:
+
+```
+python3 tools/track_pipeline.py \
+    --geojson Track_sections.geojson \
+    --loop-lengths Loop_length.csv \
+    --out-dir firmware/src/
+```
+
+Two names you *can't* change: the pipeline always writes its output as
+`firmware/src/segments.csv` and `firmware/src/track_data.h` (fixed by
+`--out-dir` + hardcoded basenames in `track_pipeline.py`), and
+`firmware/harness/stage5/main_gnss_matcher.cpp` `#include`s
+`track_data.h` by that exact name -- so every run simply overwrites
+whatever track dataset was committed there before, regardless of what
+you named your input files.
 
 ## Build stages
 

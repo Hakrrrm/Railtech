@@ -37,8 +37,8 @@ extern "C" {
 #include "seq_store.h"
 }
 
-#include "../config.h"
-#include "../pins_board.h"
+#include "../../config.h"
+#include "../../pins_board.h"
 
 /* ---- fake matcher -> net task queue message ---------------------- */
 
@@ -187,14 +187,15 @@ static void sd_init_log_dir()
 
 static void handle_fake_seg_done(const FakeSegDone &fake)
 {
-    /* Commit-before-publish, non-negotiable (Build Plan Sec 2): odometer
-     * accumulates in integer metres with half-up rounding from mm. */
+    /* Commit-before-publish, non-negotiable (Build Plan Sec 2). The
+     * odometer accumulates the segment length exactly, in millimetres --
+     * this used to round to whole metres per segment, giving every
+     * traversal of a given segment the same fixed error rather than a
+     * random one, so it accumulated instead of cancelling. */
     uint32_t new_seq = seq_store_get_seq() + 1;
-    int64_t d_m = (fake.d_mm + 50) / 100; /* mm -> 0.1 m, then below -> m */
-    d_m = (d_m + 5) / 10;                 /* 0.1 m -> whole m, half-up */
-    int64_t new_odo_m = seq_store_get_odo_m() + d_m;
+    int64_t new_odo_mm = seq_store_get_odo_mm() + fake.d_mm;
 
-    if (seq_store_commit(new_seq, new_odo_m) != 0) {
+    if (seq_store_commit(new_seq, new_odo_mm) != 0) {
         Serial.println("[commit FAIL] NVS commit failed -- event NOT published (commit-before-publish)");
         return; /* A failed commit blocks publication of this event entirely. */
     }
@@ -206,7 +207,7 @@ static void handle_fake_seg_done(const FakeSegDone &fake)
     ev.seg_id = fake.seg_id;
     ev.dir = fake.dir;
     ev.d_mm = fake.d_mm;
-    ev.odo_m = new_odo_m;
+    ev.odo_mm = new_odo_mm;
     ev.hdop_x10 = fake.hdop_x10;
     ev.nsv = fake.nsv;
     ev.dwell_s = fake.dwell_s;
