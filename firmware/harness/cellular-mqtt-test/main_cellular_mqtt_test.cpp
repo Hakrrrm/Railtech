@@ -20,7 +20,7 @@
  * Series_TCPIP_Application Note_V1.02" documents for this chip family
  * (confirmed: TinyGsmClientA7670.h, which mixes in TinyGsmMqttA76xx.h,
  * is what LilyGo's own MQTT example picks for "A7670X/A7608X/SIM7670G/
- * SIM7600 series") -- see bring_up_data_connection()'s own comment for
+ * SIM7600 series") -- see net_open()'s own comment for
  * why two extra commands TinyGSM's helper also sends were dropped after
  * real hardware rejected one of them.
  *
@@ -114,6 +114,42 @@ static bool wait_for_token(String &response, const char *expect_token, unsigned 
     return false;
 }
 
+/*
+ * Reads until the line CONTAINING marker is complete, i.e. until a
+ * newline appears AFTER marker's own position.
+ *
+ * Needed because a token match like "+NETOPEN:" or "+CMQTTCONNECT: "
+ * fires the instant the token itself lands -- before the result value
+ * that follows it on the same line has been received. The obvious fix
+ * (wait_for_token(resp, "\r\n", ...)) does NOT work: resp by then
+ * already holds the command echo and its "OK\r\n", so a plain search
+ * finds one of those EARLIER newlines and returns immediately having
+ * read nothing new. Searching only after marker's index is what makes
+ * this actually wait for the rest of the line.
+ */
+static bool finish_line_after(String &response, const char *marker, unsigned long timeout_ms)
+{
+    int marker_idx = response.indexOf(marker);
+    if (marker_idx < 0) {
+        return false;
+    }
+    unsigned int search_from = (unsigned int)(marker_idx + strlen(marker));
+
+    unsigned long start = millis();
+    for (;;) {
+        if (response.indexOf('\n', search_from) >= 0) {
+            return true;
+        }
+        if (millis() - start >= timeout_ms) {
+            return false;
+        }
+        while (SerialAT.available()) {
+            response += (char)SerialAT.read();
+        }
+        delay(1);
+    }
+}
+
 static void pulse_pwrkey()
 {
     digitalWrite(BOARD_PWRKEY_PIN, LOW);
@@ -159,24 +195,46 @@ static bool wait_for_sim_ready(unsigned long timeout_ms = 15000)
     return false;
 }
 
-static bool wait_for_network_registration(unsigned long timeout_ms = 60000)
+static bool wait_for_network_registration(unsigned long timeout_ms = 90000)
 {
     String resp;
     unsigned long start = millis();
     while (millis() - start < timeout_ms) {
+        char stat = '?';
         if (send_at_command("AT+CEREG?", resp, 3000)) {
             int idx = resp.indexOf("+CEREG: ");
             if (idx >= 0) {
+                finish_line_after(resp, "+CEREG: ", 2000);
                 int comma = resp.indexOf(',', idx);
                 if (comma >= 0 && comma + 1 < (int)resp.length()) {
-                    char stat = resp[comma + 1];
+                    stat = resp[comma + 1];
                     if (stat == '1' || stat == '5') {
-                        return true; /* registered, home or roaming */
+                        return true; /* 1 = registered home, 5 = roaming */
                     }
                 }
             }
         }
-        Serial.println("[net] not registered yet, retrying...");
+
+        /* Report the raw status and signal strength rather than a bare
+         * "not registered": stat tells you WHY (2 = still searching,
+         * 3 = registration DENIED -- a plan/APN/provisioning problem no
+         * amount of waiting fixes), and CSQ separates "no coverage/
+         * antenna" from "good signal but the network won't have us".
+         * AT+CSQ's first value is 99 when unknown, else 0-31 (higher is
+         * better; under ~10 is weak). */
+        String csq;
+        int rssi = -1;
+        if (send_at_command("AT+CSQ", csq, 3000)) {
+            int idx = csq.indexOf("+CSQ: ");
+            if (idx >= 0) {
+                rssi = csq.substring(idx + 6).toInt();
+            }
+        }
+        Serial.printf("[net] not registered yet (CEREG stat=%c, CSQ=%d), retrying...\n", stat, rssi);
+        if (stat == '3') {
+            Serial.println("[net] stat=3 means registration DENIED -- the network is refusing this SIM.");
+            Serial.println("[net] Check the APN, and that the SIM is activated with a data plan.");
+        }
         delay(2000);
     }
     return false;
@@ -209,18 +267,25 @@ static bool wait_for_network_registration(unsigned long timeout_ms = 60000)
  * instead by unconditionally issuing AT+NETCLOSE first for a clean
  * slate, so that case shouldn't arise. Revisit if this function is ever
  * called a second time without an intervening NETCLOSE. */
-static bool bring_up_data_connection(const char *apn)
+static bool set_apn(const char *apn)
 {
     String resp;
     char cmd[96];
 
-    if (apn != NULL && apn[0] != '\0') {
-        snprintf(cmd, sizeof(cmd), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
-        if (!send_at_command(cmd, resp, 3000)) {
-            Serial.println("[net FAIL] AT+CGDCONT rejected -- check CELLULAR_APN in config.h");
-            return false;
-        }
+    if (apn == NULL || apn[0] == '\0') {
+        return true; /* blank APN: let the network auto-negotiate */
     }
+    snprintf(cmd, sizeof(cmd), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
+    if (!send_at_command(cmd, resp, 3000)) {
+        Serial.println("[net FAIL] AT+CGDCONT rejected -- check CELLULAR_APN in config.h");
+        return false;
+    }
+    return true;
+}
+
+static bool net_open()
+{
+    String resp;
 
     send_at_command("AT+NETCLOSE", resp, 3000); /* clean slate; failure here is fine (nothing was open) */
 
@@ -228,13 +293,9 @@ static bool bring_up_data_connection(const char *apn)
         Serial.println("[net FAIL] AT+NETOPEN got no response");
         return false;
     }
-    /* send_at_command_expect() returns the INSTANT the literal substring
-     * "+NETOPEN:" appears -- one character before the result digit that
-     * follows it (" 0", " 1", ...). Keep draining into the same resp
-     * until end-of-line so the actual result code is there to check;
-     * without this the very next line always sees a truncated
-     * "+NETOPEN:" with nothing after it and reports a false failure. */
-    wait_for_token(resp, "\r\n", 2000);
+    /* The token match above lands before the result value on that same
+     * line has arrived -- finish the line first (see finish_line_after). */
+    finish_line_after(resp, "+NETOPEN:", 5000);
     if (resp.indexOf("+NETOPEN: 0") < 0) {
         Serial.print("[net FAIL] AT+NETOPEN: ");
         Serial.println(resp);
@@ -290,8 +351,8 @@ static bool mqtt_connect(const char *broker, uint16_t port, const char *client_i
     }
     /* Same truncation trap as AT+NETOPEN above: the token match fires
      * right after "+CMQTTCONNECT: " itself, before <client_index>,
-     * <result> have been read. Drain to end of line first. */
-    wait_for_token(resp, "\r\n", 2000);
+     * <result> have been read. Finish the line first. */
+    finish_line_after(resp, "+CMQTTCONNECT: ", 5000);
     /* "+CMQTTCONNECT: <client_index>,<result>" -- result 0 = success. */
     int comma = resp.indexOf(',');
     if (comma < 0 || comma + 1 >= (int)resp.length() || resp[comma + 1] != '0') {
@@ -389,9 +450,17 @@ void setup()
     }
     Serial.println("[sim] ready");
 
-    Serial.println("[net] bringing up data connection...");
-    if (!bring_up_data_connection(CELLULAR_APN)) {
-        Serial.println("[FATAL] could not bring up the data connection. Halting.");
+    /* Order matters, and an earlier version of this had it backwards:
+     * set the APN, then WAIT FOR REGISTRATION, and only then open the
+     * network. AT+NETOPEN activates a PDP context, which the network
+     * can only grant once the modem is actually registered -- opening
+     * first fails (or returns a non-zero result) even though the SIM and
+     * APN are both fine. Matches the order LilyGo's own MQTT example
+     * uses: setNetworkAPN -> getRegistrationStatus loop ->
+     * setNetworkActive. */
+    Serial.println("[net] setting APN...");
+    if (!set_apn(CELLULAR_APN)) {
+        Serial.println("[FATAL] could not set the APN. Halting.");
         while (1) delay(1000);
     }
 
@@ -401,6 +470,13 @@ void setup()
         while (1) delay(1000);
     }
     Serial.println("[net] registered");
+
+    Serial.println("[net] opening data connection...");
+    if (!net_open()) {
+        Serial.println("[FATAL] AT+NETOPEN failed even though registered. Halting.");
+        while (1) delay(1000);
+    }
+    Serial.println("[net] data connection open");
 
     if (send_at_command("AT+IPADDR", resp, 3000)) {
         Serial.print("[net] IP: ");
