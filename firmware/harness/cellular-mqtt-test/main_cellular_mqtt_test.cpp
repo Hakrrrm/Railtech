@@ -15,13 +15,14 @@
  * included. Same discipline Stage 5's gnss_bringup() already
  * established for AT+CGNSSPWR/AT+CGNSSMODE.
  *
- * Network activation (AT+CGDCONT / AT+CSOCKSETPN / AT+CIPCFG /
- * AT+NETOPEN) and registration polling (AT+CEREG?) are the A76xx-family
- * commands TinyGsmClientA76xx.h's setNetworkActive()/
- * getRegistrationStatus() send -- SIM7670G uses this same family
- * (confirmed: TinyGsmClientA7670.h, which mixes in
- * TinyGsmMqttA76xx.h, is what LilyGo's own MQTT example picks for
- * "A7670X/A7608X/SIM7670G/SIM7600 series").
+ * Network activation (AT+CGDCONT / AT+NETOPEN) and registration polling
+ * (AT+CEREG?) are the minimal sequence SIMCOM's own official "A76XX
+ * Series_TCPIP_Application Note_V1.02" documents for this chip family
+ * (confirmed: TinyGsmClientA7670.h, which mixes in TinyGsmMqttA76xx.h,
+ * is what LilyGo's own MQTT example picks for "A7670X/A7608X/SIM7670G/
+ * SIM7600 series") -- see bring_up_data_connection()'s own comment for
+ * why two extra commands TinyGSM's helper also sends were dropped after
+ * real hardware rejected one of them.
  *
  * MQTT itself uses the MODEM's OWN onboard MQTT client (AT+CMQTT...),
  * not a TCP socket + a software MQTT stack on the ESP32 side. This is
@@ -181,17 +182,33 @@ static bool wait_for_network_registration(unsigned long timeout_ms = 60000)
     return false;
 }
 
-/* AT+CGDCONT sets the APN on PDP context 1; AT+CSOCKSETPN/AT+CIPCFG
- * select that context for the IP stack; AT+NETOPEN actually brings the
- * data connection up ("+NETOPEN: 0" = success). The reference fork
- * also tolerates a separate "+IP ERROR: Network is already opened"
- * response as success, for a caller that might invoke this while a
- * connection is already up -- not handled here (this harness's single-
- * expect-token send_at_command_expect() can't watch for two different
- * response strings at once), sidestepped instead by unconditionally
- * issuing AT+NETCLOSE first for a clean slate, so that case shouldn't
- * arise. Revisit if this function is ever called a second time without
- * an intervening NETCLOSE. */
+/* AT+CGDCONT sets the APN on PDP context 1; AT+NETOPEN actually brings
+ * the data connection up ("+NETOPEN: 0" = success).
+ *
+ * Originally also sent AT+CSOCKSETPN=1,1 and AT+CIPCFG="CID",1 first
+ * (lifted from TinyGsmClientA76xx.h's enableIP4(), read as
+ * documentation only -- see this file's header comment). On real
+ * SIM7670G-MNGV hardware AT+CIPCFG came back ERROR. Checked against
+ * SIMCOM's own official "A76XX Series_TCPIP_Application Note_V1.02"
+ * (the same chip family LilyGo's own SIM7670G MQTT example targets):
+ * neither AT+CSOCKSETPN nor AT+CIPCFG appears ANYWHERE in that manual's
+ * AT command list, and its own worked "Configure Context / Activate
+ * context" example is exactly AT+CGDCONT then AT+NETOPEN, nothing else.
+ * Both extra commands dropped -- they were TinyGSM helper commands for
+ * a broader dual-stack (IPv4/IPv6) selection case this modem's firmware
+ * doesn't implement/need, not something the modem's own documented
+ * minimal bring-up actually requires. Same "real hardware/vendor manual
+ * over library abstraction" call already made for GNSS bring-up
+ * (gnss_bringup() in Stage 5's harness).
+ *
+ * The reference fork also tolerates a separate "+IP ERROR: Network is
+ * already opened" response as success on AT+NETOPEN, for a caller that
+ * might invoke this while a connection is already up -- not handled
+ * here (this harness's single-expect-token send_at_command_expect()
+ * can't watch for two different response strings at once), sidestepped
+ * instead by unconditionally issuing AT+NETCLOSE first for a clean
+ * slate, so that case shouldn't arise. Revisit if this function is ever
+ * called a second time without an intervening NETCLOSE. */
 static bool bring_up_data_connection(const char *apn)
 {
     String resp;
@@ -203,15 +220,6 @@ static bool bring_up_data_connection(const char *apn)
             Serial.println("[net FAIL] AT+CGDCONT rejected -- check CELLULAR_APN in config.h");
             return false;
         }
-    }
-
-    if (!send_at_command("AT+CSOCKSETPN=1,1", resp, 3000)) {
-        Serial.println("[net FAIL] AT+CSOCKSETPN rejected");
-        return false;
-    }
-    if (!send_at_command("AT+CIPCFG=\"CID\",1", resp, 3000)) {
-        Serial.println("[net FAIL] AT+CIPCFG rejected");
-        return false;
     }
 
     send_at_command("AT+NETCLOSE", resp, 3000); /* clean slate; failure here is fine (nothing was open) */
