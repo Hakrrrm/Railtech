@@ -228,6 +228,13 @@ static bool bring_up_data_connection(const char *apn)
         Serial.println("[net FAIL] AT+NETOPEN got no response");
         return false;
     }
+    /* send_at_command_expect() returns the INSTANT the literal substring
+     * "+NETOPEN:" appears -- one character before the result digit that
+     * follows it (" 0", " 1", ...). Keep draining into the same resp
+     * until end-of-line so the actual result code is there to check;
+     * without this the very next line always sees a truncated
+     * "+NETOPEN:" with nothing after it and reports a false failure. */
+    wait_for_token(resp, "\r\n", 2000);
     if (resp.indexOf("+NETOPEN: 0") < 0) {
         Serial.print("[net FAIL] AT+NETOPEN: ");
         Serial.println(resp);
@@ -281,6 +288,10 @@ static bool mqtt_connect(const char *broker, uint16_t port, const char *client_i
         Serial.println("[mqtt FAIL] no +CMQTTCONNECT result line");
         return false;
     }
+    /* Same truncation trap as AT+NETOPEN above: the token match fires
+     * right after "+CMQTTCONNECT: " itself, before <client_index>,
+     * <result> have been read. Drain to end of line first. */
+    wait_for_token(resp, "\r\n", 2000);
     /* "+CMQTTCONNECT: <client_index>,<result>" -- result 0 = success. */
     int comma = resp.indexOf(',');
     if (comma < 0 || comma + 1 >= (int)resp.length() || resp[comma + 1] != '0') {
