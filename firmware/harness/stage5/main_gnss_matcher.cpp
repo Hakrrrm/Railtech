@@ -529,11 +529,27 @@ static void gnss_matcher_task(void *arg)
             time_s[0] = '\0';
         }
 
-        char raw_json[256];
+        /* lrv: added so a GNSS_RAW line is self-describing once it
+         * leaves the device (SD upload, or any future MQTT publish) --
+         * the file/topic it arrived on is not something a database row
+         * should have to depend on to know which vehicle it's from.
+         * Same field name/value SEG_DONE already uses.
+         *
+         * t: the fix's own raw UTC epoch (0 if its date/time fields
+         * didn't parse -- same sentinel meaning as SEG_DONE's t and as
+         * utc_epoch_s itself). date/sgt (local SGT strings, already
+         * empty in that same failure case) are kept alongside for
+         * human-reading on the serial monitor, but a consumer that
+         * wants an unambiguous instant should use t: reconstructing one
+         * from date+sgt requires assuming the UTC+8 offset, and gives
+         * nothing at all to fall back on for the empty-string case. */
+        char raw_json[320];
         snprintf(raw_json, sizeof(raw_json),
-            "{\"v\":1,\"ev\":\"GNSS_RAW\",\"date\":\"%s\",\"sgt\":\"%s\","
+            "{\"v\":1,\"ev\":\"GNSS_RAW\",\"lrv\":\"%s\",\"t\":%lu,"
+            "\"date\":\"%s\",\"sgt\":\"%s\","
             "\"lat\":%s,\"lon\":%s,\"alt_m\":%s,"
             "\"pdop\":%s,\"hdop\":%s,\"vdop\":%s,\"nsv\":%u}",
+            MQTT_LRV_ID, (unsigned long)fix.utc_epoch_s,
             date_s, time_s, lat_s, lon_s, alt_s,
             pdop_s, hdop_s, vdop_s, (unsigned)fix.nsv);
         Serial.println(raw_json);
