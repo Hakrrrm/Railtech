@@ -17,6 +17,16 @@ create table segment_traversals (
   seg_id text not null,
   ts timestamptz not null,
   length_m numeric not null,
+  dir text,        -- 'E'/'W' from the Tier 1 event -- forward/reverse
+                    -- placeholder, not a real cardinal direction (see
+                    -- firmware map_matcher.h). text, not char(1): the
+                    -- direction model may grow beyond a single letter
+                    -- before it grows real semantics.
+  odo_km numeric,   -- device's own cumulative odometer AFTER this
+                    -- segment, as reported in the same event -- lets you
+                    -- detect device/backend divergence (device odo_km
+                    -- vs. sum(length_m) here) without recomputing
+                    -- anything.
   confidence numeric,
   hdop numeric,
   unique (lrv_id, seq)

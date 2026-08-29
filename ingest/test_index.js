@@ -19,7 +19,7 @@ function test_valid_seg_done_maps_to_row() {
   assert.deepEqual(result.row, {
     lrv_id: "D07", seq: 48213, seg_id: "PE3_PE4_E",
     ts: new Date(1785560670 * 1000).toISOString(),
-    length_m: 612.4, confidence: null, hdop: 1.4,
+    length_m: 612.4, dir: "E", odo_km: 128473.9, confidence: null, hdop: 1.4,
   });
   console.log("[ok] valid SEG_DONE payload maps to a segment_traversals row");
 }

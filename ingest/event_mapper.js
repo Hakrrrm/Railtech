@@ -63,6 +63,8 @@ export function parseEvent(payload) {
       seg_id: obj.seg,
       ts: new Date(obj.t * 1000).toISOString(),
       length_m: obj.d_m,
+      dir: obj.dir,
+      odo_km: obj.odo_km,
       confidence: null,
       hdop: obj.hdop,
     },
