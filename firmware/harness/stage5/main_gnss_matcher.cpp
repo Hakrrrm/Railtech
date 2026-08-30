@@ -111,10 +111,12 @@ extern "C" {
 #define MQTT_CLIENT_INDEX 0
 #define MQTT_KEEPALIVE_S 60UL
 #define MQTT_CHECK_INTERVAL_MS 60000UL /* how often loop() checks/retries the cellular MQTT link */
-#define NET_OPEN_MAX_ATTEMPTS     5
-#define MQTT_START_MAX_ATTEMPTS   5
-#define MQTT_CONNECT_MAX_ATTEMPTS 5
-#define RETRY_BACKOFF_MS          3000UL
+/* Two different attempt budgets for cellular_mqtt_bringup(), depending
+ * on who's calling -- see that function's own comment for why setup()
+ * and loop() need different values here. */
+#define MQTT_BRINGUP_BOOT_MAX_ATTEMPTS      5
+#define MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS 1
+#define RETRY_BACKOFF_MS 3000UL
 
 /* Fix-quality gate, applied before the fix is allowed to move the map
  * matcher. PDOP is the primary figure: it describes the 3D solution
@@ -140,9 +142,35 @@ static volatile bool s_imu_stationary = false;
 
 /* Cellular MQTT link state (Stage 7). Read/written only from Core 1
  * (handle_seg_done() and loop()'s periodic check) -- no cross-core
- * sharing, so no volatile/mutex needed here unlike s_imu_stationary. */
+ * sharing, so no volatile/mutex needed here unlike s_imu_stationary.
+ * s_cellular_provisioned is distinct from s_mqtt_ready: it latches true
+ * once (SIM+APN+registration all succeeded during setup()) and is never
+ * cleared again -- it's what gates whether loop() should keep retrying
+ * the net/MQTT connection at all, separately from whether that
+ * connection currently happens to be up. */
 static bool s_mqtt_ready = false;
+static bool s_cellular_provisioned = false;
 static unsigned long s_last_mqtt_check_ms = 0;
+
+/* Guards every AT-command exchange over SerialAT once gnss_matcher_task
+ * (Core 0) and Core 1's MQTT calls can both be running at the same time.
+ * Before Stage 7, ALL AT traffic happened in setup(), single-threaded,
+ * before any task existed -- no contention was possible. Stage 7 added
+ * AT traffic from loop() (MQTT publish on every SEG_DONE, plus a
+ * periodic reconnect check) that now runs concurrently with
+ * gnss_matcher_task's 1 Hz AT+CGNSSINFO poll on Core 0, both over the
+ * SAME UART with no framing between exchanges -- without this mutex,
+ * two AT commands (or a command and an unrelated async URC) can
+ * interleave on the wire and corrupt whichever read happens to be in
+ * progress on either side. Held for the full duration of one logical AT
+ * exchange, including any async URC wait that follows it (e.g.
+ * AT+CMQTTCONNECT's result line arrives well after its own OK) -- not
+ * held for one raw byte at a time, and not held across multiple
+ * independent exchanges (e.g. cellular_mqtt_bringup() take/gives it
+ * separately inside each of net_open()/mqtt_start()/mqtt_connect()), so
+ * GNSS polling can still interleave BETWEEN complete AT exchanges, just
+ * never in the middle of one. */
+static SemaphoreHandle_t s_at_mutex;
 
 /* ---- Core 0 -> Core 1 queue message -------------------------------- */
 
@@ -477,7 +505,21 @@ static void gnss_bringup()
  * comments for the AT-command sourcing/vendor-manual citations). The
  * one behavioural difference: cellular_mqtt_bringup() below returns a
  * bool instead of halting on failure -- see this file's header comment
- * for why SD/Serial logging must keep working even without cellular. */
+ * for why SD/Serial logging must keep working even without cellular.
+ *
+ * wait_for_sim_ready()/wait_for_network_registration()/set_apn() below
+ * are called exactly once, from setup(), before gnss_matcher_task exists
+ * -- no contention with Core 0 is possible yet at that point, so unlike
+ * everything below them they are deliberately NOT wrapped in
+ * s_at_mutex. net_open()/mqtt_start()/mqtt_connect()/mqtt_publish()/
+ * mqtt_connected() ARE guarded: cellular_mqtt_bringup() (which calls the
+ * first three) is also called later from loop(), by which point Core 0
+ * is actively polling AT+CGNSSINFO, and mqtt_publish()/mqtt_connected()
+ * are only ever called from loop() in the first place. Known
+ * simplification, inherited unchanged from cellular-mqtt-test: the
+ * modem's async +CMQTTCONNLOST URC (a broker-side disconnect) isn't
+ * handled directly -- it's only caught reactively, either by the next
+ * mqtt_publish() failing or by mqtt_connected()'s periodic check. */
 
 static bool wait_for_sim_ready(unsigned long timeout_ms = 15000)
 {
@@ -543,44 +585,61 @@ static bool set_apn(const char *apn)
     return true;
 }
 
+/* Mutex-guarded from here down -- see s_at_mutex's comment. Each
+ * function takes the mutex once at entry and gives it back before every
+ * return, so the whole AT exchange it performs (including any async URC
+ * wait) is atomic with respect to gnss_matcher_task's own AT traffic. */
+
 static bool net_open()
 {
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
+    bool ok;
 
     send_at_command("AT+NETCLOSE", resp, 3000); /* clean slate; failure here is fine (nothing was open) */
 
     if (!send_at_command_expect("AT+NETOPEN", resp, "+NETOPEN:", 15000)) {
         Serial.println("[net FAIL] AT+NETOPEN got no response");
-        return false;
+        ok = false;
+    } else {
+        finish_line_after(resp, "+NETOPEN:", 5000);
+        if (resp.indexOf("+NETOPEN: 0") < 0) {
+            Serial.print("[net FAIL] AT+NETOPEN: ");
+            Serial.println(resp);
+            ok = false;
+        } else {
+            ok = true;
+        }
     }
-    finish_line_after(resp, "+NETOPEN:", 5000);
-    if (resp.indexOf("+NETOPEN: 0") < 0) {
-        Serial.print("[net FAIL] AT+NETOPEN: ");
-        Serial.println(resp);
-        return false;
-    }
-    return true;
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 static bool mqtt_start()
 {
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
     send_at_command("AT+CMQTTDISC=0,120", resp, 3000);
     send_at_command("AT+CMQTTREL=0", resp, 3000);
     send_at_command("AT+CMQTTSTOP", resp, 3000);
     delay(20);
 
-    return send_at_command_expect("AT+CMQTTSTART", resp, "+CMQTTSTART: 0", 30000);
+    bool ok = send_at_command_expect("AT+CMQTTSTART", resp, "+CMQTTSTART: 0", 30000);
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 static bool mqtt_connect(const char *broker, uint16_t port, const char *client_id)
 {
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
     char cmd[160];
+    bool ok;
 
     snprintf(cmd, sizeof(cmd), "AT+CMQTTACCQ=%d,\"%s\",0", MQTT_CLIENT_INDEX, client_id);
     if (!send_at_command(cmd, resp, 3000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTACCQ rejected");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
 
@@ -591,11 +650,13 @@ static bool mqtt_connect(const char *broker, uint16_t port, const char *client_i
              MQTT_CLIENT_INDEX, broker, (unsigned)port, MQTT_KEEPALIVE_S);
     if (!send_at_command(cmd, resp, 30000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTCONNECT got no OK");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
     resp = "";
     if (!wait_for_token(resp, "+CMQTTCONNECT: ", 30000)) {
         Serial.println("[mqtt FAIL] no +CMQTTCONNECT result line");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
     finish_line_after(resp, "+CMQTTCONNECT: ", 5000);
@@ -603,85 +664,133 @@ static bool mqtt_connect(const char *broker, uint16_t port, const char *client_i
     if (comma < 0 || comma + 1 >= (int)resp.length() || resp[comma + 1] != '0') {
         Serial.print("[mqtt FAIL] +CMQTTCONNECT result: ");
         Serial.println(resp);
-        return false;
+        ok = false;
+    } else {
+        ok = true;
     }
-    return true;
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 static bool mqtt_publish(const char *topic, const char *payload)
 {
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
     char cmd[64];
 
     snprintf(cmd, sizeof(cmd), "AT+CMQTTTOPIC=%d,%u", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
     if (!send_at_command_expect(cmd, resp, ">", 10000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTTOPIC got no '>' prompt");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
     SerialAT.println(topic);
     resp = "";
     if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
         Serial.println("[mqtt FAIL] topic write not OK'd");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
 
     snprintf(cmd, sizeof(cmd), "AT+CMQTTPAYLOAD=%d,%u", MQTT_CLIENT_INDEX, (unsigned)strlen(payload));
     if (!send_at_command_expect(cmd, resp, ">", 10000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTPAYLOAD got no '>' prompt");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
     SerialAT.println(payload);
     resp = "";
     if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
         Serial.println("[mqtt FAIL] payload write not OK'd");
+        xSemaphoreGive(s_at_mutex);
         return false;
     }
 
-    snprintf(cmd, sizeof(cmd), "AT+CMQTTPUB=%d,1,60,0", MQTT_CLIENT_INDEX); /* QoS 1: broker-acked, no retain */
-    if (!send_at_command(cmd, resp, 10000)) {
+    /* QoS 0, matching cellular-mqtt-test's own proven value -- NOT QoS 1.
+     * An earlier version of this function requested QoS 1 without ever
+     * waiting for or checking the completion URC that would confirm the
+     * broker actually acked it (the modem's manual documents one, but
+     * its exact name/format hasn't been confirmed against real hardware
+     * or the vendor manual, and this project's own discipline is to
+     * never guess at AT behavior). Requesting QoS 1 but not checking its
+     * ack provides no stronger guarantee than QoS 0 while adding broker
+     * handshake overhead for nothing -- reverted rather than ship a
+     * guarantee the code doesn't actually implement. Implementing real
+     * QoS 1 confirmation (mirroring the CMQTTCONNECT async-URC pattern
+     * above) is future work once that URC is confirmed. */
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTPUB=%d,0,60,0", MQTT_CLIENT_INDEX);
+    bool ok = send_at_command(cmd, resp, 10000);
+    if (!ok) {
         Serial.println("[mqtt FAIL] AT+CMQTTPUB not OK'd");
-        return false;
     }
-    return true;
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 /* AT+CMQTTDISC? -> "+CMQTTDISC: <client_index>,<status>" -- status 0
  * means still connected. */
 static bool mqtt_connected()
 {
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
+    bool ok;
     if (!send_at_command("AT+CMQTTDISC?", resp, 5000)) {
-        return false;
+        ok = false;
+    } else {
+        int idx = resp.indexOf("+CMQTTDISC: ");
+        if (idx < 0) {
+            ok = false;
+        } else {
+            int comma = resp.indexOf(',', idx);
+            ok = comma >= 0 && comma + 1 < (int)resp.length() && resp[comma + 1] == '0';
+        }
     }
-    int idx = resp.indexOf("+CMQTTDISC: ");
-    if (idx < 0) {
-        return false;
-    }
-    int comma = resp.indexOf(',', idx);
-    return comma >= 0 && comma + 1 < (int)resp.length() && resp[comma + 1] == '0';
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 static char s_mqtt_topic[64];
 static char s_mqtt_client_id[32];
 
-/* Full net-open + MQTT-start + MQTT-connect chain, each stage retried
- * (see NET_OPEN_MAX_ATTEMPTS et al.) before giving up on that stage.
- * Safe to call more than once -- net_open() always NETCLOSEs first and
+/* Full net-open + MQTT-start + MQTT-connect chain, each stage retried up
+ * to max_attempts_per_stage times before giving up on that stage. Safe
+ * to call more than once -- net_open() always NETCLOSEs first and
  * mqtt_start() always tears down any existing client before restarting,
  * so this is exactly what loop() calls again later to reconnect. Does
  * NOT touch SIM/APN/registration -- callers that need those (i.e. only
- * the very first boot) check them separately first. */
-static bool cellular_mqtt_bringup()
+ * the very first boot) check them separately first.
+ *
+ * max_attempts_per_stage is a parameter, not a fixed constant, because
+ * this function is called from two very different contexts: setup()
+ * (before any task exists -- nothing else is waiting on this, so it can
+ * afford to be thorough) and loop()'s periodic reconnect check (Core 0
+ * is actively producing SegDoneMsg entries into an 8-deep queue the
+ * whole time this function blocks -- stacking multiple retries with
+ * their multi-second AT timeouts and RETRY_BACKOFF_MS delays inline
+ * could block loop() long enough to overflow that queue and silently
+ * drop completed segments). setup() passes
+ * MQTT_BRINGUP_BOOT_MAX_ATTEMPTS; loop() passes
+ * MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS (1) and just relies on its own
+ * MQTT_CHECK_INTERVAL_MS cadence to keep trying -- spread over time
+ * instead of stacked inline. The backoff delay is skipped after the
+ * LAST attempt in each stage (nothing left to wait for before
+ * returning), which matters most when max_attempts_per_stage is 1: it
+ * removes what would otherwise be a pointless RETRY_BACKOFF_MS delay on
+ * every single failed reconnect tick. */
+static bool cellular_mqtt_bringup(uint8_t max_attempts_per_stage)
 {
     bool net_ok = false;
-    for (int attempt = 1; attempt <= NET_OPEN_MAX_ATTEMPTS; attempt++) {
+    for (int attempt = 1; attempt <= max_attempts_per_stage; attempt++) {
         if (net_open()) {
             net_ok = true;
             break;
         }
-        Serial.printf("[net] AT+NETOPEN attempt %d/%d failed, retrying...\n",
-                      attempt, NET_OPEN_MAX_ATTEMPTS);
-        delay(RETRY_BACKOFF_MS);
+        Serial.printf("[net] AT+NETOPEN attempt %d/%d failed%s\n",
+                      attempt, max_attempts_per_stage,
+                      (attempt < max_attempts_per_stage) ? ", retrying..." : "");
+        if (attempt < max_attempts_per_stage) {
+            delay(RETRY_BACKOFF_MS);
+        }
     }
     if (!net_ok) {
         Serial.println("[net FAIL] AT+NETOPEN failed after all retries.");
@@ -689,14 +798,17 @@ static bool cellular_mqtt_bringup()
     }
 
     bool mqtt_started = false;
-    for (int attempt = 1; attempt <= MQTT_START_MAX_ATTEMPTS; attempt++) {
+    for (int attempt = 1; attempt <= max_attempts_per_stage; attempt++) {
         if (mqtt_start()) {
             mqtt_started = true;
             break;
         }
-        Serial.printf("[mqtt] AT+CMQTTSTART attempt %d/%d failed, retrying...\n",
-                      attempt, MQTT_START_MAX_ATTEMPTS);
-        delay(RETRY_BACKOFF_MS);
+        Serial.printf("[mqtt] AT+CMQTTSTART attempt %d/%d failed%s\n",
+                      attempt, max_attempts_per_stage,
+                      (attempt < max_attempts_per_stage) ? ", retrying..." : "");
+        if (attempt < max_attempts_per_stage) {
+            delay(RETRY_BACKOFF_MS);
+        }
     }
     if (!mqtt_started) {
         Serial.println("[mqtt FAIL] AT+CMQTTSTART failed after all retries.");
@@ -704,14 +816,17 @@ static bool cellular_mqtt_bringup()
     }
 
     bool mqtt_conn_ok = false;
-    for (int attempt = 1; attempt <= MQTT_CONNECT_MAX_ATTEMPTS; attempt++) {
+    for (int attempt = 1; attempt <= max_attempts_per_stage; attempt++) {
         if (mqtt_connect(MQTT_HOST, MQTT_PORT, s_mqtt_client_id)) {
             mqtt_conn_ok = true;
             break;
         }
-        Serial.printf("[mqtt] connect attempt %d/%d failed, retrying...\n",
-                      attempt, MQTT_CONNECT_MAX_ATTEMPTS);
-        delay(RETRY_BACKOFF_MS);
+        Serial.printf("[mqtt] connect attempt %d/%d failed%s\n",
+                      attempt, max_attempts_per_stage,
+                      (attempt < max_attempts_per_stage) ? ", retrying..." : "");
+        if (attempt < max_attempts_per_stage) {
+            delay(RETRY_BACKOFF_MS);
+        }
     }
     if (!mqtt_conn_ok) {
         Serial.println("[mqtt FAIL] MQTT connect failed after all retries.");
@@ -754,10 +869,15 @@ static void format_x10(int32_t v_x10, char *out, size_t out_len)
              (unsigned long)(mag % 10UL));
 }
 
-/* Direct AT+CGNSSINFO query, 1 Hz poll. */
+/* Direct AT+CGNSSINFO query, 1 Hz poll. Mutex-guarded (see s_at_mutex's
+ * comment) -- this runs on Core 0 and can now race Core 1's MQTT AT
+ * traffic over the same UART. */
 static bool raw_gnss_query(String &response)
 {
-    return send_at_command("AT+CGNSSINFO", response, RAW_GPS_TIMEOUT_MS);
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
+    bool ok = send_at_command("AT+CGNSSINFO", response, RAW_GPS_TIMEOUT_MS);
+    xSemaphoreGive(s_at_mutex);
+    return ok;
 }
 
 /* ---- Core 0: IMU sampling task (20 Hz, independent of GNSS) -------- */
@@ -1014,7 +1134,17 @@ static void handle_seg_done(const SegDoneMsg &m)
      * exchange) and does NOT re-queue the event -- loop()'s periodic
      * check reconnects in the background, and the NEXT SEG_DONE (or a
      * future backfill-from-SD pass, not yet built) is what actually
-     * gets sent once the link is back. */
+     * gets sent once the link is back.
+     *
+     * A single mqtt_publish() call is bounded (each of its five AT
+     * sub-exchanges has its own timeout, ~36 s worst case if every one
+     * of them stalls right up to its limit) but not retried internally,
+     * so a burst of several SegDoneMsg entries drained back-to-back
+     * (e.g. after map_matcher_take_pending() credits multiple segments
+     * across a blackout bridge) is self-limiting rather than
+     * compounding: the FIRST failure in the burst flips s_mqtt_ready to
+     * false immediately, so every subsequent message in the same burst
+     * skips straight past this block with no AT traffic at all. */
     if (s_mqtt_ready) {
         if (!mqtt_publish(s_mqtt_topic, json)) {
             Serial.println("[mqtt] publish failed -- marking link down, loop() will reconnect");
@@ -1039,6 +1169,12 @@ void setup()
     }
     delay(100);
 
+    /* Must exist before gnss_matcher_task is created below, and before
+     * any of the mutex-guarded AT functions run (net_open()/mqtt_start()/
+     * mqtt_connect() are called later in this function) -- see
+     * s_at_mutex's own comment. */
+    s_at_mutex = xSemaphoreCreateMutex();
+
     seq_store_init();
     sd_init_log_dir();
 
@@ -1053,12 +1189,16 @@ void setup()
     gnss_bringup();
 
     /* Cellular MQTT bring-up (Stage 7) -- deliberately NOT fatal. SIM/
-     * APN/registration only need checking once, here at boot; net_open/
-     * mqtt_start/mqtt_connect are also re-run later from loop() so
-     * cellular_mqtt_bringup() alone is what's retried on reconnect.
-     * Any failure at any stage just leaves s_mqtt_ready false and moves
-     * on -- GNSS/matcher/SD/Serial logging must work with zero cellular
-     * coverage, exactly as this file did before Stage 7. */
+     * APN/registration are each checked exactly once, here at boot, and
+     * s_cellular_provisioned only latches true if ALL THREE succeed --
+     * that's what loop() checks before ever retrying (see loop()'s own
+     * comment). net_open/mqtt_start/mqtt_connect are also re-run later
+     * from loop() via cellular_mqtt_bringup(), which is the part that
+     * legitimately can be transient (coverage gaps, broker hiccups) and
+     * so IS worth retrying on a timer. Any failure at any stage just
+     * leaves s_mqtt_ready false and moves on -- GNSS/matcher/SD/Serial
+     * logging must work with zero cellular coverage, exactly as this
+     * file did before Stage 7. */
     Serial.println("[net] checking SIM...");
     if (!wait_for_sim_ready()) {
         Serial.println("[net] SIM never reported READY -- continuing without cellular MQTT (SD/Serial only)");
@@ -1075,7 +1215,8 @@ void setup()
                 Serial.println("[net] never registered -- continuing without cellular MQTT (SD/Serial only)");
             } else {
                 Serial.println("[net] registered");
-                s_mqtt_ready = cellular_mqtt_bringup();
+                s_cellular_provisioned = true;
+                s_mqtt_ready = cellular_mqtt_bringup(MQTT_BRINGUP_BOOT_MAX_ATTEMPTS);
                 if (!s_mqtt_ready) {
                     Serial.println("[mqtt] bring-up failed -- continuing without cellular MQTT (SD/Serial only), will retry from loop()");
                 }
@@ -1098,24 +1239,29 @@ void loop()
     }
 
     /* Periodic cellular MQTT health check/reconnect -- same
-     * MQTT_CHECK_INTERVAL_MS cadence as cellular-mqtt-test. If SIM/APN/
-     * registration never succeeded at boot at all, this intentionally
-     * does NOT retry those (a missing SIM or bad APN isn't going to fix
-     * itself); it only retries the net_open/mqtt_start/mqtt_connect
-     * chain, which is the part that can legitimately be transient
-     * (coverage gaps, broker hiccups). s_mqtt_client_id/s_mqtt_topic are
-     * only populated once wait_for_sim_ready() succeeds above, so an
-     * empty client_id there is exactly the "never got that far" case. */
+     * MQTT_CHECK_INTERVAL_MS cadence as cellular-mqtt-test. Gated on
+     * s_cellular_provisioned, NOT on s_mqtt_client_id being non-empty:
+     * client_id/topic are populated as soon as the SIM reports ready,
+     * before APN/registration are even attempted, so checking THAT
+     * alone would keep retrying net_open() forever even when APN setup
+     * or registration failed at boot -- neither of which fixes itself
+     * on a timer. s_cellular_provisioned only latches true once SIM+
+     * APN+registration ALL succeeded in setup(), which is the actual
+     * "worth retrying" condition. Uses
+     * MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS (1 attempt per stage, not
+     * setup()'s more thorough budget) so a bad link can't block this
+     * loop -- and therefore the SegDoneMsg queue drain right above --
+     * for minutes; see cellular_mqtt_bringup()'s own comment. */
     unsigned long now = millis();
     if (now - s_last_mqtt_check_ms >= MQTT_CHECK_INTERVAL_MS) {
         s_last_mqtt_check_ms = now;
-        if (s_mqtt_client_id[0] != '\0') {
+        if (s_cellular_provisioned) {
             if (s_mqtt_ready && !mqtt_connected()) {
                 Serial.println("[mqtt] connection lost, will reconnect");
                 s_mqtt_ready = false;
             }
             if (!s_mqtt_ready) {
-                s_mqtt_ready = cellular_mqtt_bringup();
+                s_mqtt_ready = cellular_mqtt_bringup(MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS);
             }
         }
     }
