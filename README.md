@@ -99,7 +99,7 @@ Two names you *can't* change: the pipeline always writes its output as
 whatever track dataset was committed there before, regardless of what
 you named your input files.
 
-## Supabase / ingest bridge setup
+## Supabase / ingest bridge setup (NOTES)
 
 1. Create a Supabase project, run `supabase/schema.sql` in the SQL editor.
 2. Copy `supabase/seed.example.sql`, adjust `lrv_id` values to match your
@@ -110,6 +110,9 @@ you named your input files.
    `MQTT_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service-role key only --
    never put it on the device).
 4. `npm start`.
+
+## Supabase / ingest bridge setup (DETAILS)
+Supabase Password: kZoJXfkKlq87mGea
 
 ## Build stages
 
