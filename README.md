@@ -119,6 +119,8 @@ you named your input files.
    `cd ingest`
    \
    `npm start`
+   \
+   *The .env file and the Supabase keys pasted inside are already safely stored.
 
 ## Build stages
 
