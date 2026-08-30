@@ -26,6 +26,14 @@ firmware/
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
+supabase/
+  schema.sql          core tables (Build Plan Sec 8, TDD Sec 5.8)
+  seed.example.sql    example vehicle seed rows
+ingest/
+  event_mapper.js     pure Tier 1 JSON -> segment_traversals row mapping (host-testable)
+  index.js            MQTT -> Supabase bridge wiring
+  test_index.js       host tests for event_mapper.js
+  .env.example        documents every required env var; copy to .env (gitignored)
 platformio.ini      PlatformIO project config -- src_dir is project-global, so every harness
                      stage lives under firmware/harness/<stage>/ with a per-env build_src_filter
                      selecting just its own subfolder
@@ -90,6 +98,29 @@ Two names you *can't* change: the pipeline always writes its output as
 `track_data.h` by that exact name -- so every run simply overwrites
 whatever track dataset was committed there before, regardless of what
 you named your input files.
+
+## Supabase / ingest bridge setup (NOTES)
+
+1. Create a Supabase project, run `supabase/schema.sql` in the SQL editor.
+2. Copy `supabase/seed.example.sql`, adjust `lrv_id` values to match your
+   devices' `config.h` `MQTT_LRV_ID`/`MQTT_FLEET`, run it -- the FK on
+   `segment_traversals` rejects events for any vehicle not seeded here
+   (intentional).
+3. `cd ingest && npm install && cp .env.example .env` and fill in
+   `MQTT_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service-role key only --
+   never put it on the device).
+4. `npm start`.
+
+## Supabase / ingest bridge setup (DETAILS)
+
+1. Supabase Password: kZoJXfkKlq87mGea
+2. Workflow: Whenever you open the Codespace and want to turn the listener on, you only need to type these two lines:
+   \
+   `cd ingest`
+   \
+   `npm start`
+   \
+   *The .env file and the Supabase keys pasted inside are already safely stored.
 
 ## Build stages
 
