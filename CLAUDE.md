@@ -82,6 +82,50 @@ delta; whether the pending-command module should be its own
 folded into `seq_store` itself; retry/backoff policy for the ack publish
 if the broker is unreachable for an extended period.
 
+**If `set_odo` ends up a signed delta**, `firmware/src/event_serializer.c`'s
+`round_div_nonneg()` needs revisiting first. It rounds `d_mm`/`odo_mm` for
+the SEG_DONE JSON assuming both are always >= 0 (true today -- a segment
+length and a cumulative odometer never go negative) and is NOT correct
+for a negative input (integer division/remainder sign handling in C
+differs for negative operands, and the function's own name says
+"nonneg"). A signed correction delta flowing through `seq_store_commit()`
+into `odo_mm` and then through this same serialization path would hit
+that unhandled case silently -- verify/fix `round_div_nonneg()` (or add a
+signed-safe variant) as part of building this, don't assume it already
+works.
+
+## Known limitation: `seq_store_commit()`'s two NVS keys aren't one atomic write
+
+Flagged during a Stage 7 audit, not yet fixed -- low real-world impact so
+left as-is for now, but worth knowing before leaning on it harder (e.g.
+for the remote-correction work above, which explicitly depends on
+`seq_store`'s commit-before-act discipline being trustworthy).
+
+`seq_store_commit()` (`firmware/src/seq_store.c`, target/NVS path) writes
+`seq` and `odo_mm` as two separate NVS keys (`nvs_set_u32` then
+`nvs_set_i64`), then calls `nvs_commit()`. There is no multi-key
+transaction here: if the first write succeeds and the second fails, the
+function correctly returns -1 (so that event is NOT published -- the
+commit-before-publish contract itself still holds), but `seq` may already
+be durably written to flash while `odo_mm` is not. A reboot right after
+that exact failure would resume with a `seq` one ahead of what `odo_mm`
+reflects.
+
+Not independently verified against ESP-IDF's actual NVS write-durability
+timing (no hardware/docs access when this was flagged) -- the failure
+window might be narrower or wider than described above depending on
+whether `nvs_set_u32` is durable immediately or only after `nvs_commit()`.
+Either way, the two keys are never written as one atomic unit today.
+
+Practical impact is limited, which is why this is deferred rather than
+fixed immediately: the ingest bridge's `unique(lrv_id, seq)` constraint
+does not require `seq` to be contiguous, only unique and increasing, so
+the actual consequence of hitting this window is a gap in `seq` numbering
+-- not odometer corruption, not a double-count, not a lost mileage
+segment. Revisit if `seq` is ever relied on as a literal traversal count
+rather than just a dedup/ordering key, or if the remote-correction work
+above wants a stronger atomicity guarantee than this provides.
+
 ## Future work: multi-branch/depot track topology
 
 Not yet built. The current matcher and track pipeline target a single

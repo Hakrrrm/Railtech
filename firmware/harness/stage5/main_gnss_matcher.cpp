@@ -752,13 +752,37 @@ static bool mqtt_connected()
 static char s_mqtt_topic[64];
 static char s_mqtt_client_id[32];
 
+/* Tracks whether the underlying AT+NETOPEN data/PDP session is currently
+ * believed open, independent of s_mqtt_ready (the MQTT layer on top of
+ * it). See cellular_mqtt_bringup()'s comment for why this exists. */
+static bool s_net_ready = false;
+
 /* Full net-open + MQTT-start + MQTT-connect chain, each stage retried up
  * to max_attempts_per_stage times before giving up on that stage. Safe
- * to call more than once -- net_open() always NETCLOSEs first and
- * mqtt_start() always tears down any existing client before restarting,
- * so this is exactly what loop() calls again later to reconnect. Does
- * NOT touch SIM/APN/registration -- callers that need those (i.e. only
- * the very first boot) check them separately first.
+ * to call more than once -- mqtt_start() always tears down any existing
+ * client before restarting, so this is exactly what loop() calls again
+ * later to reconnect. Does NOT touch SIM/APN/registration -- callers
+ * that need those (i.e. only the very first boot) check them separately
+ * first.
+ *
+ * net_open() itself is only called when s_net_ready is false. Originally
+ * this ran unconditionally on every call to this function -- meaning
+ * every single reconnect attempt did a full AT+NETCLOSE then AT+NETOPEN,
+ * even when only the MQTT layer had dropped and the underlying LTE data
+ * session was still perfectly fine. s_net_ready skips that churn in the
+ * common case (repeated reconnect attempts while genuinely out of
+ * coverage, or a broker-side-only hiccup) without ever risking getting
+ * stuck: it's set true only after net_open() itself succeeds, and reset
+ * false whenever EITHER mqtt_start() or mqtt_connect() ultimately fails
+ * after exhausting their own retries -- i.e. any full reconnect failure
+ * invalidates the optimistic assumption, so the next attempt starts with
+ * a clean net_open() again rather than trusting a possibly-stale belief
+ * that the network layer is still up. Deliberately does NOT try to query
+ * the modem's actual current network state (e.g. some form of
+ * AT+NETOPEN?) to decide this more precisely -- that would need its
+ * exact response format confirmed against real hardware/the vendor
+ * manual first, which hasn't been done; tracking our own last-known-good
+ * state avoids needing to guess at unverified AT behavior.
  *
  * max_attempts_per_stage is a parameter, not a fixed constant, because
  * this function is called from two very different contexts: setup()
@@ -779,22 +803,25 @@ static char s_mqtt_client_id[32];
  * every single failed reconnect tick. */
 static bool cellular_mqtt_bringup(uint8_t max_attempts_per_stage)
 {
-    bool net_ok = false;
-    for (int attempt = 1; attempt <= max_attempts_per_stage; attempt++) {
-        if (net_open()) {
-            net_ok = true;
-            break;
+    if (!s_net_ready) {
+        bool net_ok = false;
+        for (int attempt = 1; attempt <= max_attempts_per_stage; attempt++) {
+            if (net_open()) {
+                net_ok = true;
+                break;
+            }
+            Serial.printf("[net] AT+NETOPEN attempt %d/%d failed%s\n",
+                          attempt, max_attempts_per_stage,
+                          (attempt < max_attempts_per_stage) ? ", retrying..." : "");
+            if (attempt < max_attempts_per_stage) {
+                delay(RETRY_BACKOFF_MS);
+            }
         }
-        Serial.printf("[net] AT+NETOPEN attempt %d/%d failed%s\n",
-                      attempt, max_attempts_per_stage,
-                      (attempt < max_attempts_per_stage) ? ", retrying..." : "");
-        if (attempt < max_attempts_per_stage) {
-            delay(RETRY_BACKOFF_MS);
+        if (!net_ok) {
+            Serial.println("[net FAIL] AT+NETOPEN failed after all retries.");
+            return false;
         }
-    }
-    if (!net_ok) {
-        Serial.println("[net FAIL] AT+NETOPEN failed after all retries.");
-        return false;
+        s_net_ready = true;
     }
 
     bool mqtt_started = false;
@@ -812,6 +839,7 @@ static bool cellular_mqtt_bringup(uint8_t max_attempts_per_stage)
     }
     if (!mqtt_started) {
         Serial.println("[mqtt FAIL] AT+CMQTTSTART failed after all retries.");
+        s_net_ready = false; /* don't trust the network layer either -- start clean next time */
         return false;
     }
 
@@ -830,6 +858,7 @@ static bool cellular_mqtt_bringup(uint8_t max_attempts_per_stage)
     }
     if (!mqtt_conn_ok) {
         Serial.println("[mqtt FAIL] MQTT connect failed after all retries.");
+        s_net_ready = false; /* don't trust the network layer either -- start clean next time */
         return false;
     }
 
@@ -979,6 +1008,23 @@ static void gnss_matcher_task(void *arg)
          * its own, before trusting the matcher's SEG_DONE output. */
         uint32_t now_s = (fix.utc_epoch_s != 0) ? fix.utc_epoch_s : (uint32_t)(millis() / 1000);
 
+        /* map_matcher_update()'s own contract (map_matcher.h) requires a
+         * MONOTONIC clock -- its dwell-time math is a plain subtraction,
+         * elapsed = now_s - seg_enter_time_s. now_s above is NOT
+         * monotonic across the matcher's lifetime: it's epoch-when-synced,
+         * millis()-fallback otherwise, and the very first fix that
+         * acquires time sync jumps from a small millis()-based value
+         * straight to a real ~1.7-billion-second epoch. Feeding THAT into
+         * the matcher made the dwell_s of whichever segment happened to
+         * be completing right after sync explode and saturate at 65535 --
+         * a real, previously-unflagged bug, not hypothetical. Fixed by
+         * giving the matcher its own always-monotonic clock, completely
+         * decoupled from GNSS time-sync status; now_s above is still used
+         * as before for GNSS_RAW/SEG_DONE's reported "t" (where a real
+         * wall-clock epoch, falling back to millis() only when unsynced,
+         * is exactly what's wanted). */
+        uint32_t mono_now_s = (uint32_t)(millis() / 1000);
+
         char lat_s[16], lon_s[16], alt_s[12];
         char pdop_s[8], hdop_s[8], vdop_s[8];
         char date_s[11], time_s[9];
@@ -1043,7 +1089,7 @@ static void gnss_matcher_task(void *arg)
         map_matcher_event_t ev;
         int fired = map_matcher_update(&matcher_st, TRACK_SEGMENTS, TRACK_NUM_SEGMENTS,
                                         &TRACK_NEXT_FWD[0][0], TRACK_NEXT_FWD_COUNT,
-                                        fix.lat_e7, fix.lon_e7, now_s, &ev);
+                                        fix.lat_e7, fix.lon_e7, mono_now_s, &ev);
         if (!fired) {
             continue;
         }
