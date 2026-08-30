@@ -21,8 +21,9 @@ firmware/
   harness/
     stage3/         Stage 3 Wi-Fi hotspot harness, also doing Stage 6 SD store-and-forward
                      logging (one running /lrv_log/events.ndjson, appended to across every boot)
-    stage5/         Stage 5: real GNSS (direct AT+CGNSSINFO, 1 Hz) + map matcher + optional
-                     IMU stationary gate. Serial + SD only, no Wi-Fi/MQTT (deferred to Stage 7)
+    stage5/         Stage 5/7: real GNSS (direct AT+CGNSSINFO, 1 Hz) + map matcher + optional
+                     IMU stationary gate + cellular MQTT publish (Stage 7) + optional
+                     DEBUG_MODE_ENABLED diagnostics -- see "Stage 7: cellular MQTT" below
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
@@ -90,6 +91,92 @@ Two names you *can't* change: the pipeline always writes its output as
 `track_data.h` by that exact name -- so every run simply overwrites
 whatever track dataset was committed there before, regardless of what
 you named your input files.
+
+## Stage 7: cellular MQTT + debug mode
+
+`firmware/harness/stage5/main_gnss_matcher.cpp` publishes completed
+segments (SEG_DONE) over the modem's onboard MQTT client once the
+device has registered on LTE and connected to the broker -- best-effort
+on top of the SD/Serial log, never a dependency for it (see the file's
+own header comment for the full bring-up/retry design). Topics are built
+from `MQTT_FLEET`/`MQTT_LRV_ID` in `config.h`; with the example values
+(`splrt`/`D07`) they are:
+
+| Topic                     | Direction        | Carries                                  |
+|----------------------------|-------------------|-------------------------------------------|
+| `lrv/splrt/D07/events`     | device -> broker  | SEG_DONE (Tier 1 JSON) -- always, regardless of `DEBUG_MODE_ENABLED` |
+| `lrv/splrt/D07/debug`      | device -> broker  | boot diagnostics -- only if `DEBUG_MODE_ENABLED=1` |
+| `lrv/splrt/D07/cmd`        | broker -> device  | commands -- only if `DEBUG_MODE_ENABLED=1` |
+
+Any standard MQTT client works against `test.mosquitto.org:1883`
+(`MQTT_HOST`/`MQTT_PORT` in `config.h`) -- an app like MQTT Explorer/MQTT
+Analyzer, or `mosquitto_sub`/`mosquitto_pub` on a laptop. Subscribing and
+publishing are independent actions on the same topic string: to watch
+the device, subscribe to a `lrv/...` topic in your client; to send it a
+command, publish to `lrv/splrt/D07/cmd` in that same client, no separate
+"publish topic" needed.
+
+### Enabling debug mode
+
+Set `DEBUG_MODE_ENABLED 1` in your local `firmware/config.h` (copy the
+line from `config.example.h` if it's missing) and reflash
+`stage5-gnss-matcher`. `DEBUG_MODE_ENABLED=0` (the default) leaves every
+byte of the regular behaviour unchanged -- this whole feature compiles
+out entirely, same convention as `IMU_ENABLED`.
+
+### Testing the automatic boot sequence
+
+With `DEBUG_MODE_ENABLED=1`, subscribe your MQTT client to
+`lrv/splrt/D07/debug` and power on the board. You should see, in order:
+
+1. `{"ev":"DEBUG_HEARTBEAT",...}` once a second while the GNSS engine
+   has no fix yet.
+2. One `{"ev":"DEBUG_GPS_LOCKED",...}` the moment the first fix arrives.
+3. Five `{"ev":"GNSS_RAW",...}` packets (the same shape SD's
+   `gnss_raw.ndjson` gets, one per fix) immediately after.
+4. Silence on `debug` from then on -- `events` keeps publishing SEG_DONE
+   as normal whenever a segment completes; nothing on `debug` again
+   until the next `debug_start_session` command or reboot.
+
+No SD folder is created for this automatic run -- it logs to the default
+`/lrv_log/events.ndjson` / `/lrv_log/gnss_raw.ndjson`, same files as
+`DEBUG_MODE_ENABLED=0` always uses.
+
+### Testing the `debug_start_session` command
+
+With the device already booted (locked or not) and subscribed, publish
+this exact payload to `lrv/splrt/D07/cmd`:
+
+```json
+{"cmd":"debug_start_session"}
+```
+
+Expect, on `lrv/splrt/D07/debug`:
+
+1. `{"ev":"DEBUG_SESSION_START","folder":"/lrv_log/dbgN",...}` once the
+   new SD folder (and its two empty `events.ndjson`/`gnss_raw.ndjson`
+   files) has actually been created -- `N` increments each time the
+   command is sent, starting at 1 for the first command since boot.
+2. The same heartbeat/lock/5-raw-packets sequence as the automatic run,
+   but this time SD-logged into `/lrv_log/dbgN/` instead of the default
+   files. If GNSS was already locked before the command arrived, step 2
+   starts straight at `DEBUG_GPS_LOCKED` rather than replaying
+   heartbeats for a lock that already happened.
+
+Sending the command again starts a new folder (`dbgN+1`) and repeats the
+sequence.
+
+**Bench-test this command path before trusting it.** Boot-time
+diagnostics (above) only reuse the already-hardware-proven MQTT publish
+path. The command path additionally needs the modem to *subscribe* and
+receive an incoming push (`AT+CMQTTSUBTOPIC`/`AT+CMQTTSUB`, and the
+`+CMQTTRXSTART`/`+CMQTTRXTOPIC`/`+CMQTTRXPAYLOAD`/`+CMQTTRXEND` URC
+sequence `mqtt_check_incoming()` expects) -- unlike every other AT
+sequence in this codebase, that one has not been confirmed against real
+hardware or the vendor manual. If the folder-created ack never arrives,
+check the Serial monitor first (`[cmd]`/`[mqtt]`-prefixed lines) --
+`main_gnss_matcher.cpp`'s own header comment has the full caveat and
+where to look in the code.
 
 ## Build stages
 
