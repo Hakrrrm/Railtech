@@ -34,4 +34,16 @@
  * AT+CGDCONT before AT+NETOPEN in cellular_mqtt_bringup()/net_open(). */
 #define CELLULAR_APN ""
 
+/* Stage 7: debug mode. 0 (default) = regular behaviour, unchanged --
+ * only SEG_DONE goes out over MQTT (lrv/{FLEET}/{LRV_ID}/events), same
+ * as always. 1 = also publish boot-time GNSS diagnostics (heartbeats
+ * while waiting for a lock, a lock-acquired notice, then the first 5
+ * raw fixes) to a separate lrv/{FLEET}/{LRV_ID}/debug topic, and
+ * subscribe to lrv/{FLEET}/{LRV_ID}/cmd for a debug_start_session
+ * command that creates a fresh SD logging folder and re-runs that same
+ * sequence into it. See main_gnss_matcher.cpp's header comment for the
+ * full design, and its subscribe/incoming-message AT command comments
+ * for what's UNVERIFIED against real hardware. */
+#define DEBUG_MODE_ENABLED 0
+
 #endif /* CONFIG_H */

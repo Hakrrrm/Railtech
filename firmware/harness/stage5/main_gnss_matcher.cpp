@@ -22,6 +22,59 @@
  * earlier design, dropped after it grew unboundedly across routine
  * test resets with no benefit).
  *
+ * DEBUG_MODE_ENABLED (config.h, 0/1 compile-time flag, same convention
+ * as IMU_ENABLED): 0 leaves every byte of the above unchanged -- only
+ * SEG_DONE goes over MQTT, to the events topic, exactly as always. 1
+ * additionally, ONCE per boot (or once per debug_start_session command,
+ * see below): publishes GNSS diagnostics to a SEPARATE
+ * lrv/{FLEET}/{LRV_ID}/debug topic -- heartbeats while no fix has ever
+ * been obtained, one lock-acquired notice the moment a fix first
+ * arrives, then the next DEBUG_RAW_PACKET_COUNT (5) fixes in the exact
+ * same GNSS_RAW JSON shape already written to gnss_raw.ndjson -- then
+ * goes quiet on that topic (events keeps working throughout,
+ * unaffected). A SEPARATE topic rather than reusing events: events is
+ * the ingest bridge's contract (segment_traversals rows), and mixing
+ * high-frequency boot diagnostics into it would be noise for any other
+ * consumer of that topic, even though the bridge itself would just
+ * silently ignore a non-SEG_DONE ev value.
+ *
+ * Also subscribes to lrv/{FLEET}/{LRV_ID}/cmd (device listens, backend/
+ * phone publishes) for one command, {"cmd":"debug_start_session"}: on
+ * receipt, creates a fresh numbered SD folder (/lrv_log/dbgN/,
+ * events.ndjson + gnss_raw.ndjson inside), publishes a debug-topic ack
+ * once it's created, and re-runs the SAME heartbeat/lock/5-raw-packets
+ * sequence -- but logging THIS run's SD output into the new folder
+ * instead of the default /lrv_log/ files. If a fix lock already existed
+ * before the command arrived, the sequence starts straight at the
+ * lock-acquired notice rather than replaying heartbeats for a wait that
+ * already happened.
+ *
+ * IMPORTANT, flagged explicitly: the SUBSCRIBE side of this (topic
+ * subscription via AT+CMQTTSUBTOPIC/AT+CMQTTSUB, and parsing the
+ * modem's incoming-publish URC sequence, +CMQTTRXSTART/+CMQTTRXTOPIC/
+ * +CMQTTRXPAYLOAD/+CMQTTRXEND) is NEW ground for this codebase -- every
+ * other AT sequence here was built against real hardware or a
+ * confirmed vendor manual section; this one was not. It follows the
+ * same topic-then-payload two-step shape SIMCOM's AT+CMQTT family uses
+ * for AT+CMQTTTOPIC/AT+CMQTTPAYLOAD (already proven in mqtt_publish()),
+ * which is the best available basis without hardware/manual access
+ * right now, but the exact command syntax and URC field layout are
+ * UNVERIFIED. Bench-test this specifically (mqtt_subscribe() and
+ * mqtt_check_incoming()) before trusting DEBUG_MODE_ENABLED's
+ * command-triggered path on real hardware -- the boot-time
+ * heartbeat/lock/raw-packet publish path reuses only already-proven
+ * mqtt_publish(), so that half carries no such caveat.
+ *
+ * Also fixed in passing, while touching SD logging for the debug
+ * session folder: sd_append_line() (and therefore sd_log_json()/
+ * sd_log_raw_json()) previously had no synchronization at all, despite
+ * already being called from BOTH cores (Core 1's handle_seg_done() and
+ * Core 0's gnss_matcher_task) -- a pre-existing gap from before Stage 7,
+ * same class of bug as the AT-mutex fix elsewhere in this file, just on
+ * the SD/SPI peripheral instead of the modem UART. Now guarded by
+ * s_sd_mutex. Unconditional, not gated by DEBUG_MODE_ENABLED -- it's a
+ * correctness fix that benefits every build, debug mode or not.
+ *
  * Core 0 runs two independent tasks, sampled at different rates on
  * purpose -- IMU state recognition needs to react within a few hundred
  * ms, GNSS is inherently a 1 Hz fix:
@@ -118,6 +171,12 @@ extern "C" {
 #define MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS 1
 #define RETRY_BACKOFF_MS 3000UL
 
+/* Debug mode (DEBUG_MODE_ENABLED, config.h) -- see this file's header
+ * comment for the full design. */
+#define DEBUG_RAW_PACKET_COUNT 5 /* how many post-lock raw fixes go to the debug topic */
+#define DEBUG_INCOMING_CHECK_INTERVAL_MS 1000UL /* how often loop() polls for an incoming cmd */
+#define DEBUG_SD_SESSION_DIR_MAX 32 /* "/lrv_log/dbg" + up to a few digits, well under this */
+
 /* Fix-quality gate, applied before the fix is allowed to move the map
  * matcher. PDOP is the primary figure: it describes the 3D solution
  * geometry, so it is the one that actually says whether the position is
@@ -140,17 +199,40 @@ extern "C" {
  * without a mutex; not true in general for multi-word shared state. */
 static volatile bool s_imu_stationary = false;
 
-/* Cellular MQTT link state (Stage 7). Read/written only from Core 1
- * (handle_seg_done() and loop()'s periodic check) -- no cross-core
- * sharing, so no volatile/mutex needed here unlike s_imu_stationary.
- * s_cellular_provisioned is distinct from s_mqtt_ready: it latches true
- * once (SIM+APN+registration all succeeded during setup()) and is never
- * cleared again -- it's what gates whether loop() should keep retrying
- * the net/MQTT connection at all, separately from whether that
- * connection currently happens to be up. */
+/* Cellular MQTT link state (Stage 7). WRITTEN only from Core 1
+ * (handle_seg_done() and loop()'s periodic check) -- single-writer, so
+ * no mutex needed for that. s_mqtt_ready is also READ from Core 0 when
+ * DEBUG_MODE_ENABLED (debug_publish(), gnss_matcher_task) -- a
+ * single-word cross-core read of a bool that's never torn on this MCU,
+ * same reasoning already relied on for s_imu_stationary in the other
+ * direction; still no volatile needed since Core 0 tolerates reading a
+ * value that's one tick stale (worst case, one debug packet is
+ * attempted/dropped right as the link flips). s_cellular_provisioned is
+ * distinct from s_mqtt_ready: it latches true once (SIM+APN+registration
+ * all succeeded during setup()) and is never cleared again -- it's what
+ * gates whether loop() should keep retrying the net/MQTT connection at
+ * all, separately from whether that connection currently happens to be
+ * up. */
 static bool s_mqtt_ready = false;
 static bool s_cellular_provisioned = false;
 static unsigned long s_last_mqtt_check_ms = 0;
+
+#if DEBUG_MODE_ENABLED
+/* Debug boot sequence (Stage 7 DEBUG_MODE_ENABLED) -- see this file's
+ * header comment for the full design. State is Core-0-owned (driven by
+ * GNSS fix arrival in gnss_matcher_task): DEBUG_SEQ_IDLE means nothing
+ * to do (either finished, or DEBUG_MODE_ENABLED left it uninitialised --
+ * see setup(), which always starts it at DEBUG_SEQ_WAIT_LOCK on boot).
+ * s_debug_restart_requested is the ONE field Core 1 writes (on the
+ * debug_start_session command) -- a single bool, same
+ * single-word-cross-core pattern already used for s_imu_stationary, so
+ * no mutex needed for it specifically. */
+typedef enum { DEBUG_SEQ_IDLE, DEBUG_SEQ_WAIT_LOCK, DEBUG_SEQ_SEND_RAW } debug_seq_state_t;
+static debug_seq_state_t s_debug_seq_state = DEBUG_SEQ_IDLE;
+static uint8_t s_debug_raw_sent = 0;
+static bool s_gnss_ever_locked = false;
+static volatile bool s_debug_restart_requested = false;
+#endif /* DEBUG_MODE_ENABLED */
 
 /* Guards every AT-command exchange over SerialAT once gnss_matcher_task
  * (Core 0) and Core 1's MQTT calls can both be running at the same time.
@@ -211,30 +293,56 @@ static QueueHandle_t s_matcher_queue;
 #define SD_RAW_LOG_FILE SD_LOG_DIR "/gnss_raw.ndjson"
 static bool s_sd_ready = false;
 
-static void sd_append_line(const char *path, const char *json)
+/* Guards every SD/SPI access (SD.open/mkdir/write/close) across both
+ * cores. Before this, sd_append_line() (and so sd_log_json()/
+ * sd_log_raw_json()) had NO synchronization despite already being
+ * called from BOTH Core 1 (handle_seg_done()) and Core 0
+ * (gnss_matcher_task) -- a pre-existing gap from before Stage 7, same
+ * class of issue s_at_mutex already fixes for the modem UART. Fixed here
+ * while adding the debug session's dynamic SD path below (which needed
+ * cross-core-safe access to that path anyway), but the fix itself is
+ * unconditional -- it benefits every build, not just
+ * DEBUG_MODE_ENABLED=1. */
+static SemaphoreHandle_t s_sd_mutex;
+
+/* Debug SD session (Stage 7 DEBUG_MODE_ENABLED) -- empty string means
+ * "use the default SD_LOG_FILE/SD_RAW_LOG_FILE paths above" (the normal,
+ * always-on case, and the ONLY case when DEBUG_MODE_ENABLED is 0: nothing
+ * ever writes to these). Set only by sd_create_debug_session() (Core 1,
+ * on the debug_start_session command) under s_sd_mutex; read by
+ * sd_write_line() (both cores) under the same mutex, so a path is never
+ * read half-written mid-update. */
+static char s_debug_session_events_file[64] = "";
+static char s_debug_session_raw_file[64] = "";
+
+static void sd_write_line(const char *default_path, const char *session_path, const char *json)
 {
     if (!s_sd_ready) {
         return;
     }
+    xSemaphoreTake(s_sd_mutex, portMAX_DELAY);
+    const char *path = (session_path[0] != '\0') ? session_path : default_path;
     File f = SD.open(path, FILE_APPEND);
     if (!f) {
         Serial.print("[sd FAIL] could not open ");
         Serial.print(path);
         Serial.println(" for append -- continuing without SD log");
+        xSemaphoreGive(s_sd_mutex);
         return;
     }
     f.println(json);
     f.close();
+    xSemaphoreGive(s_sd_mutex);
 }
 
 static void sd_log_json(const char *json)
 {
-    sd_append_line(SD_LOG_FILE, json);
+    sd_write_line(SD_LOG_FILE, s_debug_session_events_file, json);
 }
 
 static void sd_log_raw_json(const char *json)
 {
-    sd_append_line(SD_RAW_LOG_FILE, json);
+    sd_write_line(SD_RAW_LOG_FILE, s_debug_session_raw_file, json);
 }
 
 static void sd_init_log_dir()
@@ -251,6 +359,67 @@ static void sd_init_log_dir()
     s_sd_ready = true;
     Serial.println("[sd] logging to " SD_LOG_FILE " (appending across boots)");
 }
+
+#if DEBUG_MODE_ENABLED
+/* Creates a new numbered SD folder (SD_LOG_DIR "/dbgN") with fresh
+ * events.ndjson/gnss_raw.ndjson touched inside it, and points
+ * sd_log_json()/sd_log_raw_json() at those files instead of the default
+ * ones via s_debug_session_events_file/raw_file. Only ever called from
+ * Core 1 (the debug_start_session command handler). Returns true and
+ * fills session_dir_out (>= DEBUG_SD_SESSION_DIR_MAX bytes) with the new
+ * directory path on success. */
+static bool sd_create_debug_session(char *session_dir_out, size_t session_dir_out_len)
+{
+    if (!s_sd_ready) {
+        Serial.println("[sd FAIL] cannot start a debug session -- SD not ready");
+        return false;
+    }
+
+    static uint8_t s_debug_session_counter = 0;
+    s_debug_session_counter++;
+    char dir[DEBUG_SD_SESSION_DIR_MAX];
+    snprintf(dir, sizeof(dir), SD_LOG_DIR "/dbg%u", (unsigned)s_debug_session_counter);
+
+    xSemaphoreTake(s_sd_mutex, portMAX_DELAY);
+    bool dir_ok = SD.exists(dir) || SD.mkdir(dir);
+    if (!dir_ok) {
+        Serial.print("[sd FAIL] could not create debug session dir ");
+        Serial.println(dir);
+        xSemaphoreGive(s_sd_mutex);
+        return false;
+    }
+
+    char events_path[sizeof(s_debug_session_events_file)];
+    char raw_path[sizeof(s_debug_session_raw_file)];
+    snprintf(events_path, sizeof(events_path), "%s/events.ndjson", dir);
+    snprintf(raw_path, sizeof(raw_path), "%s/gnss_raw.ndjson", dir);
+
+    /* Touch both files now (open+close, no content) so "folder created"
+     * means something concrete on the SD card immediately, rather than
+     * an empty promise that only becomes true once the first SEG_DONE/
+     * raw fix eventually gets written. */
+    File fe = SD.open(events_path, FILE_APPEND);
+    if (fe) {
+        fe.close();
+    }
+    File fr = SD.open(raw_path, FILE_APPEND);
+    if (fr) {
+        fr.close();
+    }
+
+    strncpy(s_debug_session_events_file, events_path, sizeof(s_debug_session_events_file) - 1);
+    s_debug_session_events_file[sizeof(s_debug_session_events_file) - 1] = '\0';
+    strncpy(s_debug_session_raw_file, raw_path, sizeof(s_debug_session_raw_file) - 1);
+    s_debug_session_raw_file[sizeof(s_debug_session_raw_file) - 1] = '\0';
+    xSemaphoreGive(s_sd_mutex);
+
+    strncpy(session_dir_out, dir, session_dir_out_len - 1);
+    session_dir_out[session_dir_out_len - 1] = '\0';
+    Serial.print("[sd] debug session folder ready: ");
+    Serial.println(dir);
+    return true;
+}
+#endif /* DEBUG_MODE_ENABLED */
 
 /* ---- Modem/GNSS bring-up -- direct AT commands, no TinyGSM --------
  * Explicit user request: no TinyGSM dependency anywhere in this
@@ -752,6 +921,153 @@ static bool mqtt_connected()
 static char s_mqtt_topic[64];
 static char s_mqtt_client_id[32];
 
+#if DEBUG_MODE_ENABLED
+static char s_debug_topic[64]; /* lrv/{FLEET}/{LRV_ID}/debug -- device publishes, phone/backend subscribes */
+static char s_cmd_topic[64];   /* lrv/{FLEET}/{LRV_ID}/cmd   -- device subscribes, phone/backend publishes */
+
+/*
+ * Subscribes to s_cmd_topic. UNVERIFIED against real hardware -- see this
+ * file's header comment. Follows the same topic-then-payload two-step
+ * shape as AT+CMQTTTOPIC/AT+CMQTTPAYLOAD (proven in mqtt_publish()):
+ * AT+CMQTTSUBTOPIC=<client_index>,<topic_len>,<qos> gets a '>' prompt,
+ * then the raw topic bytes; AT+CMQTTSUB=<client_index> actually
+ * subscribes. QoS 1 so the broker retries delivery of a command sent
+ * while briefly disconnected -- matching CLAUDE.md's remote-correction
+ * design note, which this reuses the same subscribe path for later. */
+static bool mqtt_subscribe(const char *topic)
+{
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
+    String resp;
+    char cmd[64];
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTSUBTOPIC=%d,%u,1", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
+    if (!send_at_command_expect(cmd, resp, ">", 10000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTSUBTOPIC got no '>' prompt");
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+    SerialAT.println(topic);
+    resp = "";
+    if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
+        Serial.println("[mqtt FAIL] subscribe topic write not OK'd");
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTSUB=%d", MQTT_CLIENT_INDEX);
+    bool ok = send_at_command(cmd, resp, 10000);
+    if (!ok) {
+        Serial.println("[mqtt FAIL] AT+CMQTTSUB not OK'd");
+    }
+    xSemaphoreGive(s_at_mutex);
+    return ok;
+}
+
+/* Persists ACROSS calls to mqtt_check_incoming() -- deliberately not a
+ * local variable. A local `String resp` would be destroyed at the end
+ * of every call, so a URC that happens to straddle two polls (this is
+ * called once a second; nothing guarantees the modem finishes sending
+ * "+CMQTTRXSTART:..." within one poll's non-blocking peek) would have
+ * its already-read first half silently discarded, and the second half
+ * would arrive on the next poll looking like it never had a
+ * "+CMQTTRXSTART:" prefix at all -- a real, found-on-review bug in an
+ * earlier version of this function, not hypothetical. Cleared after
+ * every attempt that actually saw a "+CMQTTRXSTART:" (success or
+ * give-up), so a malformed/incomplete message doesn't wedge future
+ * polls; NOT cleared on the common "nothing pending yet" fast path, so
+ * a genuinely partial start is retained for the next poll to complete. */
+static String s_incoming_buf;
+
+/*
+ * Non-blocking-ish peek for an unsolicited incoming-publish URC on
+ * s_cmd_topic. UNVERIFIED against real hardware -- see this file's
+ * header comment. Assumed shape (consistent with how other SIMCOM
+ * A76xx-family onboard-MQTT-client URCs are structured, but the exact
+ * field layout for THIS firmware has not been confirmed):
+ *
+ *   +CMQTTRXSTART: <client_index>,<topic_len>,<payload_len>
+ *   +CMQTTRXTOPIC: <client_index>,<topic_len>
+ *   <topic bytes>
+ *   +CMQTTRXPAYLOAD: <client_index>,<payload_len>
+ *   <payload bytes>
+ *   +CMQTTRXEND: <client_index>
+ *
+ * Returns true and fills payload_out (topic is not returned -- callers
+ * only ever have one subscription, s_cmd_topic, so it's assumed rather
+ * than checked) if a complete incoming message was read within
+ * timeout_ms of a "+CMQTTRXSTART:" appearing; false otherwise (nothing
+ * pending, or malformed/incomplete before timeout -- either way, no
+ * partial message is ever handed to the caller).
+ */
+static bool mqtt_check_incoming(char *payload_out, size_t payload_out_len, unsigned long timeout_ms)
+{
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
+
+    while (SerialAT.available()) {
+        s_incoming_buf += (char)SerialAT.read();
+    }
+    if (s_incoming_buf.indexOf("+CMQTTRXSTART:") < 0) {
+        /* Nothing pending -- the common case, every single poll. Don't
+         * block waiting for something that may never come. Defensive
+         * cap: this branch should never accumulate much (every other AT
+         * exchange runs under this same mutex and starts with its own
+         * clean read), but if unrelated noise ever did pile up here
+         * without matching, don't let it grow unbounded. */
+        if (s_incoming_buf.length() > 512) {
+            s_incoming_buf = "";
+        }
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+
+    /* Something started arriving -- now it's worth waiting out the rest
+     * of the sequence properly rather than bailing on this same poll.
+     * From here on, every return path clears s_incoming_buf first: this
+     * attempt is being resolved one way or another, so nothing should
+     * carry over to the next poll. */
+    if (!wait_for_token(s_incoming_buf, "+CMQTTRXPAYLOAD:", timeout_ms)) {
+        Serial.println("[mqtt] incoming message start seen but no +CMQTTRXPAYLOAD -- dropping");
+        s_incoming_buf = "";
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+    if (!finish_line_after(s_incoming_buf, "+CMQTTRXPAYLOAD:", 2000)) {
+        Serial.println("[mqtt] incoming message: +CMQTTRXPAYLOAD line never completed -- dropping");
+        s_incoming_buf = "";
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+    if (!wait_for_token(s_incoming_buf, "+CMQTTRXEND:", timeout_ms)) {
+        Serial.println("[mqtt] incoming message: no +CMQTTRXEND -- dropping");
+        s_incoming_buf = "";
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+
+    /* Payload bytes are between the end of the "+CMQTTRXPAYLOAD: ...\n"
+     * line and the start of "+CMQTTRXEND:". */
+    int payload_line_end = s_incoming_buf.indexOf('\n', s_incoming_buf.indexOf("+CMQTTRXPAYLOAD:"));
+    int end_marker = s_incoming_buf.indexOf("+CMQTTRXEND:");
+    String resp = s_incoming_buf; /* copy out before clearing -- substring() below reads from this */
+    s_incoming_buf = "";
+    xSemaphoreGive(s_at_mutex);
+
+    if (payload_line_end < 0 || end_marker < 0 || end_marker <= payload_line_end) {
+        Serial.println("[mqtt] incoming message: could not locate payload bounds -- dropping");
+        return false;
+    }
+    String payload = resp.substring(payload_line_end + 1, end_marker);
+    payload.trim();
+    if (payload.length() == 0 || payload.length() >= payload_out_len) {
+        Serial.println("[mqtt] incoming message: empty or too large for buffer -- dropping");
+        return false;
+    }
+    strncpy(payload_out, payload.c_str(), payload_out_len - 1);
+    payload_out[payload_out_len - 1] = '\0';
+    return true;
+}
+#endif /* DEBUG_MODE_ENABLED */
+
 /* Tracks whether the underlying AT+NETOPEN data/PDP session is currently
  * believed open, independent of s_mqtt_ready (the MQTT layer on top of
  * it). See cellular_mqtt_bringup()'s comment for why this exists. */
@@ -969,6 +1285,25 @@ static void imu_task(void *arg)
 
 /* ---- Core 0: GNSS + matcher task ------------------------------------ */
 
+#if DEBUG_MODE_ENABLED
+/* Best-effort debug-topic publish -- does NOT touch s_mqtt_ready on
+ * failure (that stays single-writer, Core 1 only -- see s_mqtt_ready's
+ * own comment); a lost debug packet is just tolerated, unlike a lost
+ * SEG_DONE. Safe to call from Core 0 (gnss_matcher_task calls this):
+ * mqtt_publish() itself is mutex-guarded, and this only ever READS
+ * s_mqtt_ready -- a single-word cross-core read, same pattern already
+ * relied on for s_imu_stationary in the other direction. */
+static void debug_publish(const char *topic, const char *json)
+{
+    if (!s_mqtt_ready) {
+        return;
+    }
+    if (!mqtt_publish(topic, json)) {
+        Serial.println("[debug] publish failed, dropping this debug packet (best-effort, not retried)");
+    }
+}
+#endif /* DEBUG_MODE_ENABLED */
+
 static void gnss_matcher_task(void *arg)
 {
     (void)arg;
@@ -982,6 +1317,24 @@ static void gnss_matcher_task(void *arg)
         if (s_imu_stationary) {
             continue; /* imu_task already logged the stationary/motion transition */
         }
+
+#if DEBUG_MODE_ENABLED
+        if (s_debug_restart_requested) {
+            s_debug_restart_requested = false;
+            s_debug_raw_sent = 0;
+            s_debug_seq_state = s_gnss_ever_locked ? DEBUG_SEQ_SEND_RAW : DEBUG_SEQ_WAIT_LOCK;
+            if (s_gnss_ever_locked) {
+                /* Already locked before this restart -- announce that
+                 * immediately rather than replaying a wait that already
+                 * happened; the next valid fix below starts sending raw
+                 * packets since s_debug_seq_state is already SEND_RAW. */
+                char lock_json[96];
+                snprintf(lock_json, sizeof(lock_json),
+                    "{\"v\":1,\"ev\":\"DEBUG_GPS_LOCKED\",\"lrv\":\"%s\"}", MQTT_LRV_ID);
+                debug_publish(s_debug_topic, lock_json);
+            }
+        }
+#endif
 
         String raw;
         if (!raw_gnss_query(raw)) {
@@ -1000,6 +1353,15 @@ static void gnss_matcher_task(void *arg)
         if (!fix.valid) {
             Serial.printf("[gnss] no fix yet (fixMode=%u, nsv=%u)\n",
                            (unsigned)fix.fix_mode, (unsigned)fix.nsv);
+#if DEBUG_MODE_ENABLED
+            if (s_debug_seq_state == DEBUG_SEQ_WAIT_LOCK) {
+                char hb_json[96];
+                snprintf(hb_json, sizeof(hb_json),
+                    "{\"v\":1,\"ev\":\"DEBUG_HEARTBEAT\",\"lrv\":\"%s\",\"fix_mode\":%u,\"nsv\":%u}",
+                    MQTT_LRV_ID, (unsigned)fix.fix_mode, (unsigned)fix.nsv);
+                debug_publish(s_debug_topic, hb_json);
+            }
+#endif
             continue;
         }
 
@@ -1075,6 +1437,28 @@ static void gnss_matcher_task(void *arg)
         Serial.println(raw_json);
         sd_log_raw_json(raw_json);
 
+#if DEBUG_MODE_ENABLED
+        if (!s_gnss_ever_locked) {
+            s_gnss_ever_locked = true;
+            if (s_debug_seq_state == DEBUG_SEQ_WAIT_LOCK) {
+                char lock_json[96];
+                snprintf(lock_json, sizeof(lock_json),
+                    "{\"v\":1,\"ev\":\"DEBUG_GPS_LOCKED\",\"lrv\":\"%s\"}", MQTT_LRV_ID);
+                debug_publish(s_debug_topic, lock_json);
+                s_debug_seq_state = DEBUG_SEQ_SEND_RAW;
+                s_debug_raw_sent = 0;
+            }
+        }
+        if (s_debug_seq_state == DEBUG_SEQ_SEND_RAW && s_debug_raw_sent < DEBUG_RAW_PACKET_COUNT) {
+            debug_publish(s_debug_topic, raw_json);
+            s_debug_raw_sent++;
+            if (s_debug_raw_sent >= DEBUG_RAW_PACKET_COUNT) {
+                s_debug_seq_state = DEBUG_SEQ_IDLE;
+                Serial.println("[debug] boot sequence complete -- debug topic quiet until next debug_start_session");
+            }
+        }
+#endif
+
         /* Quality gate. Deliberately AFTER the GNSS_RAW print above, so
          * a rejected fix is still visible on the monitor and in
          * gnss_raw.ndjson -- being able to see that the receiver is
@@ -1116,6 +1500,57 @@ static void gnss_matcher_task(void *arg)
         } while (map_matcher_take_pending(&matcher_st, TRACK_SEGMENTS, &ev));
     }
 }
+
+#if DEBUG_MODE_ENABLED
+/* ---- Core 1: debug mode command handling ---------------------------- */
+
+/* Dispatches one incoming command payload (from mqtt_check_incoming()).
+ * Currently just the one command this feature needs; a real command
+ * dispatch table is future work once more commands exist (see
+ * CLAUDE.md's remote mileage-correction design note, which this shares
+ * s_cmd_topic's subscribe plumbing with). Deliberately a loose substring
+ * check ("cmd":"debug_start_session") rather than a real JSON parse --
+ * no JSON parser is linked into this harness, and the payload shape is
+ * simple/fixed enough that a substring match is fine for a debug-only
+ * command channel; revisit if s_cmd_topic ever carries anything with
+ * more structure (e.g. the mileage-correction command, which does need
+ * a real field like target_km parsed out). */
+static void handle_incoming_cmd(const char *payload)
+{
+    if (strstr(payload, "\"cmd\":\"debug_start_session\"") == NULL) {
+        Serial.print("[cmd] unrecognised payload, ignoring: ");
+        Serial.println(payload);
+        return;
+    }
+
+    Serial.println("[cmd] debug_start_session received");
+    char session_dir[DEBUG_SD_SESSION_DIR_MAX];
+    if (!sd_create_debug_session(session_dir, sizeof(session_dir))) {
+        Serial.println("[cmd] debug_start_session failed -- could not create SD folder, not restarting sequence");
+        return;
+    }
+
+    if (s_mqtt_ready) {
+        char ack[128];
+        snprintf(ack, sizeof(ack), "{\"v\":1,\"ev\":\"DEBUG_SESSION_START\",\"lrv\":\"%s\",\"folder\":\"%s\"}",
+                 MQTT_LRV_ID, session_dir);
+        if (!mqtt_publish(s_debug_topic, ack)) {
+            /* Same rule as handle_seg_done(): a publish failure marks
+             * the link down for loop() to reconnect -- this runs on
+             * Core 1 too, so writing s_mqtt_ready here is safe (still
+             * single-writer). */
+            Serial.println("[cmd] debug session folder created, but the MQTT ack failed to publish -- marking link down");
+            s_mqtt_ready = false;
+        }
+    } else {
+        Serial.println("[cmd] debug session folder created, but MQTT link is down -- no ack sent");
+    }
+
+    /* gnss_matcher_task (Core 0) picks this up on its next tick and
+     * resets the sequence -- see s_debug_restart_requested's comment. */
+    s_debug_restart_requested = true;
+}
+#endif /* DEBUG_MODE_ENABLED */
 
 /* ---- Core 1 (Arduino loop): commit-before-publish + Serial/SD log -- */
 
@@ -1220,6 +1655,8 @@ void setup()
      * mqtt_connect() are called later in this function) -- see
      * s_at_mutex's own comment. */
     s_at_mutex = xSemaphoreCreateMutex();
+    /* Same reasoning, for SD/SPI access -- see s_sd_mutex's own comment. */
+    s_sd_mutex = xSemaphoreCreateMutex();
 
     seq_store_init();
     sd_init_log_dir();
@@ -1252,6 +1689,10 @@ void setup()
         Serial.println("[sim] ready");
         snprintf(s_mqtt_client_id, sizeof(s_mqtt_client_id), "lrv-%s-matcher", MQTT_LRV_ID);
         snprintf(s_mqtt_topic, sizeof(s_mqtt_topic), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
+#if DEBUG_MODE_ENABLED
+        snprintf(s_debug_topic, sizeof(s_debug_topic), "lrv/%s/%s/debug", MQTT_FLEET, MQTT_LRV_ID);
+        snprintf(s_cmd_topic, sizeof(s_cmd_topic), "lrv/%s/%s/cmd", MQTT_FLEET, MQTT_LRV_ID);
+#endif
 
         if (!set_apn(CELLULAR_APN)) {
             Serial.println("[net] could not set APN -- continuing without cellular MQTT (SD/Serial only)");
@@ -1266,10 +1707,28 @@ void setup()
                 if (!s_mqtt_ready) {
                     Serial.println("[mqtt] bring-up failed -- continuing without cellular MQTT (SD/Serial only), will retry from loop()");
                 }
+#if DEBUG_MODE_ENABLED
+                if (s_mqtt_ready) {
+                    Serial.print("[cmd] subscribing to ");
+                    Serial.println(s_cmd_topic);
+                    if (!mqtt_subscribe(s_cmd_topic)) {
+                        Serial.println("[cmd] subscribe failed -- debug_start_session command will not be "
+                                        "received until the next successful reconnect re-subscribes");
+                    }
+                }
+#endif
             }
         }
     }
     s_last_mqtt_check_ms = millis();
+#if DEBUG_MODE_ENABLED
+    /* Boot-time debug sequence starts immediately, independent of
+     * whether cellular/MQTT bring-up above actually succeeded -- the
+     * heartbeats/lock-notice/raw-packets it produces publish over MQTT
+     * only when s_mqtt_ready (see gnss_matcher_task), same best-effort
+     * rule as SEG_DONE. */
+    s_debug_seq_state = DEBUG_SEQ_WAIT_LOCK;
+#endif
 
     s_matcher_queue = xQueueCreate(8, sizeof(SegDoneMsg));
 
@@ -1308,9 +1767,36 @@ void loop()
             }
             if (!s_mqtt_ready) {
                 s_mqtt_ready = cellular_mqtt_bringup(MQTT_BRINGUP_RECONNECT_MAX_ATTEMPTS);
+#if DEBUG_MODE_ENABLED
+                /* A reconnect means a fresh AT+CMQTTCONNECT session on
+                 * the modem -- the old subscription does not carry over,
+                 * so without this the debug_start_session command would
+                 * go silently unheard after any connection blip. */
+                if (s_mqtt_ready && !mqtt_subscribe(s_cmd_topic)) {
+                    Serial.println("[cmd] re-subscribe after reconnect failed -- "
+                                    "debug_start_session command will not be received");
+                }
+#endif
             }
         }
     }
+
+#if DEBUG_MODE_ENABLED
+    /* Poll for an incoming debug_start_session command. Runs on its own
+     * cadence (DEBUG_INCOMING_CHECK_INTERVAL_MS), independent of the
+     * MQTT health-check cadence above -- a command should be noticed
+     * quickly, not only once a minute. Only worth polling once actually
+     * subscribed (s_mqtt_ready and s_cmd_topic populated); mqtt_check_incoming()
+     * itself is cheap/non-blocking when nothing is pending. */
+    static unsigned long s_last_cmd_check_ms = 0;
+    if (s_mqtt_ready && now - s_last_cmd_check_ms >= DEBUG_INCOMING_CHECK_INTERVAL_MS) {
+        s_last_cmd_check_ms = now;
+        char payload[128];
+        if (mqtt_check_incoming(payload, sizeof(payload), 500)) {
+            handle_incoming_cmd(payload);
+        }
+    }
+#endif
 
     delay(20);
 }
