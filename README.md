@@ -113,10 +113,11 @@ you named your input files.
 
 ## Supabase / ingest bridge setup (DETAILS)
 
-Supabase Password: kZoJXfkKlq87mGea
-Workflow: Whenever you open the Codespace and want to turn the listener on, you only need to type these two lines:
-`cd ingest`
-`npm start`
+1. Supabase Password: kZoJXfkKlq87mGea
+2. Workflow: Whenever you open the Codespace and want to turn the listener on, you only need to type these two lines:
+   `cd ingest`
+   \
+   `npm start`
 
 ## Build stages
 
