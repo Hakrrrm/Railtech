@@ -115,6 +115,7 @@ you named your input files.
 
 1. Supabase Password: kZoJXfkKlq87mGea
 2. Workflow: Whenever you open the Codespace and want to turn the listener on, you only need to type these two lines:
+   \
    `cd ingest`
    \
    `npm start`
