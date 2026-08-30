@@ -53,6 +53,21 @@
 #define PUBLISH_INTERVAL_MS 5000UL
 #define MQTT_CHECK_INTERVAL_MS 60000UL
 
+/* Bring-up retry policy. net_open()/mqtt_start()/mqtt_connect() each try
+ * an AT sequence exactly once per call -- on a genuine cold boot (full
+ * power loss, not just an ESP32 reset) the modem's internal TCP/IP/MQTT
+ * service can still be settling even after AT+CEREG? already reports
+ * "registered" and AT+CMQTTSTART already reports success, so a single
+ * transient failure here is expected, not fatal. setup() retries each
+ * stage this many times, RETRY_BACKOFF_MS apart, before actually halting
+ * -- this is what removes the "have to manually reset after every power
+ * cycle" behavior: the retry loop absorbs the cold-boot timing race that
+ * used to require a human to notice and reset. */
+#define NET_OPEN_MAX_ATTEMPTS     5
+#define MQTT_START_MAX_ATTEMPTS   5
+#define MQTT_CONNECT_MAX_ATTEMPTS 5
+#define RETRY_BACKOFF_MS          3000UL
+
 /* ---- AT command helper -- same pattern as Stage 5's gnss_bringup() -- */
 
 static bool send_at_command_expect(const char *cmd, String &response,
@@ -472,9 +487,28 @@ void setup()
     Serial.println("[net] registered");
 
     Serial.println("[net] opening data connection...");
-    if (!net_open()) {
-        Serial.println("[FATAL] AT+NETOPEN failed even though registered. Halting.");
-        while (1) delay(1000);
+    /* CEREG reporting "registered" doesn't guarantee the modem's internal
+     * TCP/IP stack has caught up yet -- on a genuine cold boot (full
+     * power loss, not just an ESP32 reset) this can lag by a few
+     * seconds. net_open() itself only tries once per call, so retry the
+     * whole thing here rather than halting on the first transient
+     * failure -- that's what was forcing a manual reset after every
+     * power-off/power-on cycle: one bad attempt used to be permanent. */
+    {
+        bool net_ok = false;
+        for (int attempt = 1; attempt <= NET_OPEN_MAX_ATTEMPTS; attempt++) {
+            if (net_open()) {
+                net_ok = true;
+                break;
+            }
+            Serial.printf("[net] AT+NETOPEN attempt %d/%d failed, retrying...\n",
+                          attempt, NET_OPEN_MAX_ATTEMPTS);
+            delay(RETRY_BACKOFF_MS);
+        }
+        if (!net_ok) {
+            Serial.println("[FATAL] AT+NETOPEN failed after all retries. Halting.");
+            while (1) delay(1000);
+        }
     }
     Serial.println("[net] data connection open");
 
@@ -490,17 +524,52 @@ void setup()
     snprintf(s_topic, sizeof(s_topic), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
 
     Serial.println("[mqtt] starting onboard MQTT client...");
-    if (!mqtt_start()) {
-        Serial.println("[FATAL] AT+CMQTTSTART failed. Halting.");
-        while (1) delay(1000);
+    /* Same one-shot-then-halt problem as net_open() above: CMQTTSTART
+     * can legitimately fail once if the modem's internal MQTT service
+     * isn't fully up yet on a cold boot. Retry instead of halting on the
+     * first miss -- mqtt_start() already tears down any stale client
+     * state (CMQTTDISC/REL/STOP) before each attempt, so a retry here is
+     * a genuinely fresh try, not a repeat of the same failure. */
+    {
+        bool mqtt_started = false;
+        for (int attempt = 1; attempt <= MQTT_START_MAX_ATTEMPTS; attempt++) {
+            if (mqtt_start()) {
+                mqtt_started = true;
+                break;
+            }
+            Serial.printf("[mqtt] AT+CMQTTSTART attempt %d/%d failed, retrying...\n",
+                          attempt, MQTT_START_MAX_ATTEMPTS);
+            delay(RETRY_BACKOFF_MS);
+        }
+        if (!mqtt_started) {
+            Serial.println("[FATAL] AT+CMQTTSTART failed after all retries. Halting.");
+            while (1) delay(1000);
+        }
     }
 
     char client_id[32];
     snprintf(client_id, sizeof(client_id), "lrv-%s-cell", MQTT_LRV_ID);
     Serial.printf("[mqtt] connecting to %s:%d as %s...\n", MQTT_HOST, MQTT_PORT, client_id);
-    if (!mqtt_connect(MQTT_HOST, MQTT_PORT, client_id)) {
-        Serial.println("[FATAL] MQTT connect failed. Halting.");
-        while (1) delay(1000);
+    /* mqtt_connect() issues AT+CMQTTACCQ, which is exactly the command
+     * that was seen rejected during bring-up -- it depends on the
+     * client-table state CMQTTSTART just (re)created, and can lose that
+     * same cold-boot timing race. Retry the whole connect (ACCQ+CONNECT)
+     * rather than halting once. */
+    {
+        bool mqtt_conn_ok = false;
+        for (int attempt = 1; attempt <= MQTT_CONNECT_MAX_ATTEMPTS; attempt++) {
+            if (mqtt_connect(MQTT_HOST, MQTT_PORT, client_id)) {
+                mqtt_conn_ok = true;
+                break;
+            }
+            Serial.printf("[mqtt] connect attempt %d/%d failed, retrying...\n",
+                          attempt, MQTT_CONNECT_MAX_ATTEMPTS);
+            delay(RETRY_BACKOFF_MS);
+        }
+        if (!mqtt_conn_ok) {
+            Serial.println("[FATAL] MQTT connect failed after all retries. Halting.");
+            while (1) delay(1000);
+        }
     }
     Serial.println("[mqtt] connected");
     Serial.print("[mqtt] publishing to topic: ");
