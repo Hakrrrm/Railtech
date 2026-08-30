@@ -50,7 +50,7 @@
 #define SerialAT Serial1
 #define MQTT_CLIENT_INDEX 0 /* AT+CMQTT commands take a 0-1 client index; only one client used here */
 #define MQTT_KEEPALIVE_S   60UL
-#define PUBLISH_INTERVAL_MS 10000UL
+#define PUBLISH_INTERVAL_MS 5000UL
 #define MQTT_CHECK_INTERVAL_MS 60000UL
 
 /* ---- AT command helper -- same pattern as Stage 5's gnss_bringup() -- */
@@ -483,7 +483,11 @@ void setup()
         Serial.println(resp);
     }
 
-    snprintf(s_topic, sizeof(s_topic), "lrv/%s/%s/cellular_test", MQTT_FLEET, MQTT_LRV_ID);
+    /* The real SEG_DONE events topic (matches ingest/index.js's
+     * EVENTS_TOPIC wildcard "lrv/+/+/events") -- this harness now
+     * publishes ingest-shaped packets, so it uses the real topic
+     * rather than a standalone "cellular_test" one. */
+    snprintf(s_topic, sizeof(s_topic), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
 
     Serial.println("[mqtt] starting onboard MQTT client...");
     if (!mqtt_start()) {
@@ -526,9 +530,37 @@ void loop()
 
     if (now - s_last_publish_ms >= PUBLISH_INTERVAL_MS) {
         s_last_publish_ms = now;
-        char payload[96];
-        snprintf(payload, sizeof(payload), "{\"v\":1,\"ev\":\"CELLULAR_TEST\",\"n\":%lu,\"uptime_s\":%lu}",
-                 (unsigned long)s_msg_count, now / 1000);
+
+        /* Full SEG_DONE shape, matching ingest/event_mapper.js's
+         * REQUIRED_FIELDS exactly (field names, types, and the frozen
+         * Tier 1 wire contract in event_serializer.h) so this harness's
+         * packets exercise the real ingest path end-to-end rather than
+         * a synthetic heartbeat the bridge would ignore.
+         *
+         * seq increments every publish -- segment_traversals has a
+         * unique (lrv_id, seq) constraint and the bridge upserts with
+         * ignoreDuplicates, so a static seq would insert once and then
+         * silently no-op on every later publish. t has no real GNSS/RTC
+         * time source in this harness, so it's a synthetic Unix-epoch-
+         * shaped placeholder, not a real fix time. seg/dir/d_m/hdop/nsv
+         * are fixed plausible values; odo_km increments by d_m each
+         * publish, as a real odometer would across repeated segment
+         * completions. */
+        uint32_t seq = s_msg_count + 1;
+        uint32_t t = 1785560670UL + (now / 1000);
+        const float d_m = 612.4f;
+        const float hdop = 1.4f;
+        const int nsv = 19;
+        const int dwell_s = 5;
+        float odo_km = 128473.9f + (float)s_msg_count * (d_m / 1000.0f);
+
+        char payload[256];
+        snprintf(payload, sizeof(payload),
+                 "{\"v\":1,\"lrv\":\"%s\",\"seq\":%lu,\"t\":%lu,\"ev\":\"SEG_DONE\","
+                 "\"seg\":\"PE3_PE4_E\",\"dir\":\"E\",\"d_m\":%.1f,\"odo_km\":%.1f,"
+                 "\"hdop\":%.1f,\"nsv\":%d,\"dwell_s\":%d}",
+                 MQTT_LRV_ID, (unsigned long)seq, (unsigned long)t, d_m, odo_km,
+                 hdop, nsv, dwell_s);
         if (mqtt_publish(s_topic, payload)) {
             Serial.print("[mqtt] published: ");
             Serial.println(payload);
