@@ -28,4 +28,10 @@
  * desk. */
 #define IMU_ENABLED 1
 
+/* Stage 7: APN for the SIM's data plan. Operator-specific -- ask the
+ * carrier/SIM vendor (e.g. Simba) for theirs; some networks accept a
+ * blank APN and auto-negotiate, in which case leave this "". Set via
+ * AT+CGDCONT before AT+NETOPEN in cellular_mqtt_bringup()/net_open(). */
+#define CELLULAR_APN ""
+
 #endif /* CONFIG_H */

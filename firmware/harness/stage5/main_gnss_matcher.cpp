@@ -1,10 +1,22 @@
 /*
- * Stage 5 -- real GNSS (direct AT commands) + map matcher + optional
- * IMU stationary gate (Build Plan Sec 5 / TDD Sec 5.3-5.5).
+ * Stage 5/7 -- real GNSS (direct AT commands) + map matcher + optional
+ * IMU stationary gate + cellular MQTT publish (Build Plan Sec 5 / TDD
+ * Sec 5.3-5.5, Stage 7).
  *
- * Serial + SD only in this harness -- no Wi-Fi/MQTT. Deferred per
- * explicit user instruction until a SIM card is available to test
- * cellular + MQTT together (Stage 7). Reuses Stage 6's SD
+ * Cellular MQTT publish (Stage 7) is now wired in, reusing the exact
+ * AT-command sequence validated standalone in
+ * firmware/harness/cellular-mqtt-test/main_cellular_mqtt_test.cpp (SIM
+ * ready -> APN -> LTE registration -> AT+NETOPEN -> the modem's onboard
+ * AT+CMQTT... client), including that harness's retry-instead-of-halt
+ * bring-up hardening. The one architectural difference from that
+ * standalone test: this is the PRODUCTION matcher, and Stage 6's SD
+ * store-and-forward logging must keep working with or without cellular
+ * coverage -- so a cellular/MQTT bring-up failure here does NOT halt the
+ * device. It logs the failure, continues running GNSS/matcher/SD/Serial
+ * exactly as before, and retries the connection in the background from
+ * loop() every MQTT_CHECK_INTERVAL_MS. SD is therefore still the only
+ * durability guarantee; MQTT is best-effort on top of it, never a
+ * dependency for logging to keep working. Reuses Stage 6's SD
  * store-and-forward pattern: one fixed /lrv_log/ directory, appended
  * to across every boot (not a fresh folder per boot -- that was an
  * earlier design, dropped after it grew unboundedly across routine
@@ -60,6 +72,8 @@
  *     more like NMEA ddmm.mmmm instead, an unresolved conflict worth a
  *     sanity check against a known location on the very first real fix.
  */
+#include <string.h>
+
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -86,6 +100,22 @@ extern "C" {
 #define IMU_SAMPLE_INTERVAL_MS 50UL /* 20 Hz -- decoupled from GNSS's 1 Hz, see imu_task */
 #define IMU_HEARTBEAT_INTERVAL_MS 10000UL /* periodic "still alive, state is X" line, see imu_task */
 
+/* Cellular MQTT (Stage 7) -- same constants/values as
+ * cellular-mqtt-test/main_cellular_mqtt_test.cpp, proven on real
+ * hardware there. MQTT_CLIENT_INDEX_MATCHER and the "-matcher" client-id
+ * suffix below are deliberately distinct from that standalone harness's
+ * "-cell" suffix so the two can never collide with the same MQTT client
+ * id on the broker if both happened to run against the same LRV_ID at
+ * once (e.g. bring-up test left running while flashing the real
+ * matcher). */
+#define MQTT_CLIENT_INDEX 0
+#define MQTT_KEEPALIVE_S 60UL
+#define MQTT_CHECK_INTERVAL_MS 60000UL /* how often loop() checks/retries the cellular MQTT link */
+#define NET_OPEN_MAX_ATTEMPTS     5
+#define MQTT_START_MAX_ATTEMPTS   5
+#define MQTT_CONNECT_MAX_ATTEMPTS 5
+#define RETRY_BACKOFF_MS          3000UL
+
 /* Fix-quality gate, applied before the fix is allowed to move the map
  * matcher. PDOP is the primary figure: it describes the 3D solution
  * geometry, so it is the one that actually says whether the position is
@@ -107,6 +137,12 @@ extern "C" {
  * (defeats compiler caching across loop iterations) is enough here
  * without a mutex; not true in general for multi-word shared state. */
 static volatile bool s_imu_stationary = false;
+
+/* Cellular MQTT link state (Stage 7). Read/written only from Core 1
+ * (handle_seg_done() and loop()'s periodic check) -- no cross-core
+ * sharing, so no volatile/mutex needed here unlike s_imu_stationary. */
+static bool s_mqtt_ready = false;
+static unsigned long s_last_mqtt_check_ms = 0;
 
 /* ---- Core 0 -> Core 1 queue message -------------------------------- */
 
@@ -233,6 +269,65 @@ static bool send_at_command_expect(const char *cmd, String &response,
 static bool send_at_command(const char *cmd, String &response, unsigned long timeout_ms = 2000)
 {
     return send_at_command_expect(cmd, response, "\r\nOK\r\n", timeout_ms);
+}
+
+/* Keeps reading without sending anything -- for an async URC that
+ * arrives after a command already issued (e.g. AT+CMQTTCONNECT's
+ * "+CMQTTCONNECT: <idx>,<result>" line lands well after its own OK, once
+ * the broker handshake actually completes), or for the modem's response
+ * to raw bytes written directly to SerialAT (the topic/payload writes in
+ * mqtt_publish()) rather than to an AT command. Ported verbatim from
+ * cellular-mqtt-test/main_cellular_mqtt_test.cpp, already proven on real
+ * hardware there. */
+static bool wait_for_token(String &response, const char *expect_token, unsigned long timeout_ms)
+{
+    unsigned long start = millis();
+    while (millis() - start < timeout_ms) {
+        while (SerialAT.available()) {
+            char c = (char)SerialAT.read();
+            response += c;
+            if (response.indexOf(expect_token) >= 0) {
+                return true;
+            }
+            if (response.indexOf("\r\nERROR\r\n") >= 0) {
+                return false;
+            }
+        }
+        delay(1);
+    }
+    return false;
+}
+
+/*
+ * Reads until the line CONTAINING marker is complete, i.e. until a
+ * newline appears AFTER marker's own position. Needed because a token
+ * match like "+NETOPEN:" or "+CMQTTCONNECT: " fires the instant the
+ * token itself lands -- before the result value that follows it on the
+ * same line has been received. Ported verbatim from
+ * cellular-mqtt-test/main_cellular_mqtt_test.cpp -- see that file's own
+ * comment on this function for the full truncation-trap explanation.
+ */
+static bool finish_line_after(String &response, const char *marker, unsigned long timeout_ms)
+{
+    int marker_idx = response.indexOf(marker);
+    if (marker_idx < 0) {
+        return false;
+    }
+    unsigned int search_from = (unsigned int)(marker_idx + strlen(marker));
+
+    unsigned long start = millis();
+    for (;;) {
+        if (response.indexOf('\n', search_from) >= 0) {
+            return true;
+        }
+        if (millis() - start >= timeout_ms) {
+            return false;
+        }
+        while (SerialAT.available()) {
+            response += (char)SerialAT.read();
+        }
+        delay(1);
+    }
 }
 
 static void pulse_pwrkey()
@@ -367,6 +462,265 @@ static void gnss_bringup()
 
     /* modem.setGPSBaud(115200) in the reference sketch. */
     send_at_command("AT+CGNSSIPR=115200", resp, 2000);
+}
+
+/* ---- Cellular network + MQTT bring-up (Stage 7) --------------------
+ * Same modem, same SerialAT, run AFTER gnss_bringup() has already
+ * powered the modem on and started the GNSS engine -- registering on
+ * LTE and opening a data/MQTT session doesn't interfere with the GNSS
+ * engine, they're independent subsystems on this chip.
+ *
+ * Every function here is ported from
+ * cellular-mqtt-test/main_cellular_mqtt_test.cpp, already validated on
+ * real hardware in that standalone harness, including its
+ * retry-instead-of-halt-once bring-up hardening (see that file's own
+ * comments for the AT-command sourcing/vendor-manual citations). The
+ * one behavioural difference: cellular_mqtt_bringup() below returns a
+ * bool instead of halting on failure -- see this file's header comment
+ * for why SD/Serial logging must keep working even without cellular. */
+
+static bool wait_for_sim_ready(unsigned long timeout_ms = 15000)
+{
+    String resp;
+    unsigned long start = millis();
+    while (millis() - start < timeout_ms) {
+        if (send_at_command("AT+CPIN?", resp, 3000) && resp.indexOf("READY") >= 0) {
+            return true;
+        }
+        Serial.println("[sim] not ready yet (locked? not inserted?), retrying...");
+        delay(1000);
+    }
+    return false;
+}
+
+static bool wait_for_network_registration(unsigned long timeout_ms = 90000)
+{
+    String resp;
+    unsigned long start = millis();
+    while (millis() - start < timeout_ms) {
+        char stat = '?';
+        if (send_at_command("AT+CEREG?", resp, 3000)) {
+            int idx = resp.indexOf("+CEREG: ");
+            if (idx >= 0) {
+                finish_line_after(resp, "+CEREG: ", 2000);
+                int comma = resp.indexOf(',', idx);
+                if (comma >= 0 && comma + 1 < (int)resp.length()) {
+                    stat = resp[comma + 1];
+                    if (stat == '1' || stat == '5') {
+                        return true; /* 1 = registered home, 5 = roaming */
+                    }
+                }
+            }
+        }
+
+        String csq;
+        int rssi = -1;
+        if (send_at_command("AT+CSQ", csq, 3000)) {
+            int idx = csq.indexOf("+CSQ: ");
+            if (idx >= 0) {
+                rssi = csq.substring(idx + 6).toInt();
+            }
+        }
+        Serial.printf("[net] not registered yet (CEREG stat=%c, CSQ=%d), retrying...\n", stat, rssi);
+        delay(2000);
+    }
+    return false;
+}
+
+static bool set_apn(const char *apn)
+{
+    String resp;
+    char cmd[96];
+
+    if (apn == NULL || apn[0] == '\0') {
+        return true; /* blank APN: let the network auto-negotiate */
+    }
+    snprintf(cmd, sizeof(cmd), "AT+CGDCONT=1,\"IP\",\"%s\"", apn);
+    if (!send_at_command(cmd, resp, 3000)) {
+        Serial.println("[net FAIL] AT+CGDCONT rejected -- check CELLULAR_APN in config.h");
+        return false;
+    }
+    return true;
+}
+
+static bool net_open()
+{
+    String resp;
+
+    send_at_command("AT+NETCLOSE", resp, 3000); /* clean slate; failure here is fine (nothing was open) */
+
+    if (!send_at_command_expect("AT+NETOPEN", resp, "+NETOPEN:", 15000)) {
+        Serial.println("[net FAIL] AT+NETOPEN got no response");
+        return false;
+    }
+    finish_line_after(resp, "+NETOPEN:", 5000);
+    if (resp.indexOf("+NETOPEN: 0") < 0) {
+        Serial.print("[net FAIL] AT+NETOPEN: ");
+        Serial.println(resp);
+        return false;
+    }
+    return true;
+}
+
+static bool mqtt_start()
+{
+    String resp;
+    send_at_command("AT+CMQTTDISC=0,120", resp, 3000);
+    send_at_command("AT+CMQTTREL=0", resp, 3000);
+    send_at_command("AT+CMQTTSTOP", resp, 3000);
+    delay(20);
+
+    return send_at_command_expect("AT+CMQTTSTART", resp, "+CMQTTSTART: 0", 30000);
+}
+
+static bool mqtt_connect(const char *broker, uint16_t port, const char *client_id)
+{
+    String resp;
+    char cmd[160];
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTACCQ=%d,\"%s\",0", MQTT_CLIENT_INDEX, client_id);
+    if (!send_at_command(cmd, resp, 3000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTACCQ rejected");
+        return false;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTCFG=\"version\",%d,4", MQTT_CLIENT_INDEX); /* MQTT 3.1.1 */
+    send_at_command(cmd, resp, 30000);
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTCONNECT=%d,\"tcp://%s:%u\",%lu,1",
+             MQTT_CLIENT_INDEX, broker, (unsigned)port, MQTT_KEEPALIVE_S);
+    if (!send_at_command(cmd, resp, 30000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTCONNECT got no OK");
+        return false;
+    }
+    resp = "";
+    if (!wait_for_token(resp, "+CMQTTCONNECT: ", 30000)) {
+        Serial.println("[mqtt FAIL] no +CMQTTCONNECT result line");
+        return false;
+    }
+    finish_line_after(resp, "+CMQTTCONNECT: ", 5000);
+    int comma = resp.indexOf(',');
+    if (comma < 0 || comma + 1 >= (int)resp.length() || resp[comma + 1] != '0') {
+        Serial.print("[mqtt FAIL] +CMQTTCONNECT result: ");
+        Serial.println(resp);
+        return false;
+    }
+    return true;
+}
+
+static bool mqtt_publish(const char *topic, const char *payload)
+{
+    String resp;
+    char cmd[64];
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTTOPIC=%d,%u", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
+    if (!send_at_command_expect(cmd, resp, ">", 10000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTTOPIC got no '>' prompt");
+        return false;
+    }
+    SerialAT.println(topic);
+    resp = "";
+    if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
+        Serial.println("[mqtt FAIL] topic write not OK'd");
+        return false;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTPAYLOAD=%d,%u", MQTT_CLIENT_INDEX, (unsigned)strlen(payload));
+    if (!send_at_command_expect(cmd, resp, ">", 10000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTPAYLOAD got no '>' prompt");
+        return false;
+    }
+    SerialAT.println(payload);
+    resp = "";
+    if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
+        Serial.println("[mqtt FAIL] payload write not OK'd");
+        return false;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTPUB=%d,1,60,0", MQTT_CLIENT_INDEX); /* QoS 1: broker-acked, no retain */
+    if (!send_at_command(cmd, resp, 10000)) {
+        Serial.println("[mqtt FAIL] AT+CMQTTPUB not OK'd");
+        return false;
+    }
+    return true;
+}
+
+/* AT+CMQTTDISC? -> "+CMQTTDISC: <client_index>,<status>" -- status 0
+ * means still connected. */
+static bool mqtt_connected()
+{
+    String resp;
+    if (!send_at_command("AT+CMQTTDISC?", resp, 5000)) {
+        return false;
+    }
+    int idx = resp.indexOf("+CMQTTDISC: ");
+    if (idx < 0) {
+        return false;
+    }
+    int comma = resp.indexOf(',', idx);
+    return comma >= 0 && comma + 1 < (int)resp.length() && resp[comma + 1] == '0';
+}
+
+static char s_mqtt_topic[64];
+static char s_mqtt_client_id[32];
+
+/* Full net-open + MQTT-start + MQTT-connect chain, each stage retried
+ * (see NET_OPEN_MAX_ATTEMPTS et al.) before giving up on that stage.
+ * Safe to call more than once -- net_open() always NETCLOSEs first and
+ * mqtt_start() always tears down any existing client before restarting,
+ * so this is exactly what loop() calls again later to reconnect. Does
+ * NOT touch SIM/APN/registration -- callers that need those (i.e. only
+ * the very first boot) check them separately first. */
+static bool cellular_mqtt_bringup()
+{
+    bool net_ok = false;
+    for (int attempt = 1; attempt <= NET_OPEN_MAX_ATTEMPTS; attempt++) {
+        if (net_open()) {
+            net_ok = true;
+            break;
+        }
+        Serial.printf("[net] AT+NETOPEN attempt %d/%d failed, retrying...\n",
+                      attempt, NET_OPEN_MAX_ATTEMPTS);
+        delay(RETRY_BACKOFF_MS);
+    }
+    if (!net_ok) {
+        Serial.println("[net FAIL] AT+NETOPEN failed after all retries.");
+        return false;
+    }
+
+    bool mqtt_started = false;
+    for (int attempt = 1; attempt <= MQTT_START_MAX_ATTEMPTS; attempt++) {
+        if (mqtt_start()) {
+            mqtt_started = true;
+            break;
+        }
+        Serial.printf("[mqtt] AT+CMQTTSTART attempt %d/%d failed, retrying...\n",
+                      attempt, MQTT_START_MAX_ATTEMPTS);
+        delay(RETRY_BACKOFF_MS);
+    }
+    if (!mqtt_started) {
+        Serial.println("[mqtt FAIL] AT+CMQTTSTART failed after all retries.");
+        return false;
+    }
+
+    bool mqtt_conn_ok = false;
+    for (int attempt = 1; attempt <= MQTT_CONNECT_MAX_ATTEMPTS; attempt++) {
+        if (mqtt_connect(MQTT_HOST, MQTT_PORT, s_mqtt_client_id)) {
+            mqtt_conn_ok = true;
+            break;
+        }
+        Serial.printf("[mqtt] connect attempt %d/%d failed, retrying...\n",
+                      attempt, MQTT_CONNECT_MAX_ATTEMPTS);
+        delay(RETRY_BACKOFF_MS);
+    }
+    if (!mqtt_conn_ok) {
+        Serial.println("[mqtt FAIL] MQTT connect failed after all retries.");
+        return false;
+    }
+
+    Serial.print("[mqtt] connected, publishing to topic: ");
+    Serial.println(s_mqtt_topic);
+    return true;
 }
 
 /* ---- fixed-point -> human-readable rendering ----------------------
@@ -651,6 +1005,22 @@ static void handle_seg_done(const SegDoneMsg &m)
 
     Serial.println(json);
     sd_log_json(json);
+
+    /* MQTT is best-effort on top of the SD/Serial log above, never a
+     * substitute for it -- SD already has this event durably logged by
+     * the time we get here regardless of what happens next. A publish
+     * failure just marks the link down; it does NOT retry inline (that
+     * would block the matcher queue drain on a slow/blocked AT
+     * exchange) and does NOT re-queue the event -- loop()'s periodic
+     * check reconnects in the background, and the NEXT SEG_DONE (or a
+     * future backfill-from-SD pass, not yet built) is what actually
+     * gets sent once the link is back. */
+    if (s_mqtt_ready) {
+        if (!mqtt_publish(s_mqtt_topic, json)) {
+            Serial.println("[mqtt] publish failed -- marking link down, loop() will reconnect");
+            s_mqtt_ready = false;
+        }
+    }
 }
 
 void setup()
@@ -682,6 +1052,38 @@ void setup()
 
     gnss_bringup();
 
+    /* Cellular MQTT bring-up (Stage 7) -- deliberately NOT fatal. SIM/
+     * APN/registration only need checking once, here at boot; net_open/
+     * mqtt_start/mqtt_connect are also re-run later from loop() so
+     * cellular_mqtt_bringup() alone is what's retried on reconnect.
+     * Any failure at any stage just leaves s_mqtt_ready false and moves
+     * on -- GNSS/matcher/SD/Serial logging must work with zero cellular
+     * coverage, exactly as this file did before Stage 7. */
+    Serial.println("[net] checking SIM...");
+    if (!wait_for_sim_ready()) {
+        Serial.println("[net] SIM never reported READY -- continuing without cellular MQTT (SD/Serial only)");
+    } else {
+        Serial.println("[sim] ready");
+        snprintf(s_mqtt_client_id, sizeof(s_mqtt_client_id), "lrv-%s-matcher", MQTT_LRV_ID);
+        snprintf(s_mqtt_topic, sizeof(s_mqtt_topic), "lrv/%s/%s/events", MQTT_FLEET, MQTT_LRV_ID);
+
+        if (!set_apn(CELLULAR_APN)) {
+            Serial.println("[net] could not set APN -- continuing without cellular MQTT (SD/Serial only)");
+        } else {
+            Serial.println("[net] waiting for LTE registration...");
+            if (!wait_for_network_registration()) {
+                Serial.println("[net] never registered -- continuing without cellular MQTT (SD/Serial only)");
+            } else {
+                Serial.println("[net] registered");
+                s_mqtt_ready = cellular_mqtt_bringup();
+                if (!s_mqtt_ready) {
+                    Serial.println("[mqtt] bring-up failed -- continuing without cellular MQTT (SD/Serial only), will retry from loop()");
+                }
+            }
+        }
+    }
+    s_last_mqtt_check_ms = millis();
+
     s_matcher_queue = xQueueCreate(8, sizeof(SegDoneMsg));
 
     xTaskCreatePinnedToCore(imu_task, "imu", 4096, nullptr, 1, nullptr, 0 /* Core 0 */);
@@ -694,5 +1096,29 @@ void loop()
     if (xQueueReceive(s_matcher_queue, &msg, 0) == pdTRUE) {
         handle_seg_done(msg);
     }
+
+    /* Periodic cellular MQTT health check/reconnect -- same
+     * MQTT_CHECK_INTERVAL_MS cadence as cellular-mqtt-test. If SIM/APN/
+     * registration never succeeded at boot at all, this intentionally
+     * does NOT retry those (a missing SIM or bad APN isn't going to fix
+     * itself); it only retries the net_open/mqtt_start/mqtt_connect
+     * chain, which is the part that can legitimately be transient
+     * (coverage gaps, broker hiccups). s_mqtt_client_id/s_mqtt_topic are
+     * only populated once wait_for_sim_ready() succeeds above, so an
+     * empty client_id there is exactly the "never got that far" case. */
+    unsigned long now = millis();
+    if (now - s_last_mqtt_check_ms >= MQTT_CHECK_INTERVAL_MS) {
+        s_last_mqtt_check_ms = now;
+        if (s_mqtt_client_id[0] != '\0') {
+            if (s_mqtt_ready && !mqtt_connected()) {
+                Serial.println("[mqtt] connection lost, will reconnect");
+                s_mqtt_ready = false;
+            }
+            if (!s_mqtt_ready) {
+                s_mqtt_ready = cellular_mqtt_bringup();
+            }
+        }
+    }
+
     delay(20);
 }
