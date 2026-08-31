@@ -1,7 +1,13 @@
 seg_id,order,loop,from,to,length_m,bidir
-NTU_ACW_North_Hill_Hall_9,0,NTU ACW,North Hill,Hall 9,530.319,1
-NTU_ACW_Hall_9_ADM,1,NTU ACW,Hall 9,ADM,261.997,1
-NTU_ACW_ADM_Crespion,2,NTU ACW,ADM,Crespion,575.905,1
-NTU_ACW_Crespion_SRC,3,NTU ACW,Crespion,SRC,640.645,1
-NTU_ACW_SRC_Kindergarten,4,NTU ACW,SRC,Kindergarten,432.061,1
-NTU_ACW_Kindergarten_North_Hill,5,NTU ACW,Kindergarten,North Hill,231.973,1
+Senkang_East_Inner_Sengkang_Ranggung,0,Senkang East Inner,Sengkang,Ranggung,1028.334,0
+Senkang_East_Inner_Ranggung_Kangkar,1,Senkang East Inner,Ranggung,Kangkar,834.788,0
+Senkang_East_Inner_Kangkar_Bakau,2,Senkang East Inner,Kangkar,Bakau,586.268,0
+Senkang_East_Inner_Bakau_Rumbia,3,Senkang East Inner,Bakau,Rumbia,473.015,0
+Senkang_East_Inner_Rumbia_Compassvale,4,Senkang East Inner,Rumbia,Compassvale,709.598,0
+Senkang_East_Inner_Compassvale_Sengkang,5,Senkang East Inner,Compassvale,Sengkang,837.597,0
+Senkang_East_Outer_Sengkang_Compassvale,0,Senkang East Outer,Sengkang,Compassvale,833.437,0
+Senkang_East_Outer_Compassvale_Rumbia,1,Senkang East Outer,Compassvale,Rumbia,710.902,0
+Senkang_East_Outer_Rumbia_Bakau,2,Senkang East Outer,Rumbia,Bakau,479.308,0
+Senkang_East_Outer_Bakau_Kangkar,3,Senkang East Outer,Bakau,Kangkar,582.052,0
+Senkang_East_Outer_Kangkar_Ranggung,4,Senkang East Outer,Kangkar,Ranggung,839.990,0
+Senkang_East_Outer_Ranggung_Sengkang,5,Senkang East Outer,Ranggung,Sengkang,1054.211,0
