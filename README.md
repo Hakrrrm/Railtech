@@ -169,12 +169,16 @@ sequence.
 **Bench-test this command path before trusting it.** Boot-time
 diagnostics (above) only reuse the already-hardware-proven MQTT publish
 path. The command path additionally needs the modem to *subscribe* and
-receive an incoming push (`AT+CMQTTSUBTOPIC`/`AT+CMQTTSUB`, and the
-`+CMQTTRXSTART`/`+CMQTTRXTOPIC`/`+CMQTTRXPAYLOAD`/`+CMQTTRXEND` URC
-sequence `mqtt_check_incoming()` expects) -- unlike every other AT
-sequence in this codebase, that one has not been confirmed against real
-hardware or the vendor manual. If the folder-created ack never arrives,
-check the Serial monitor first (`[cmd]`/`[mqtt]`-prefixed lines) --
+receive an incoming push. The subscribe command itself is now confirmed
+against real hardware (SIM7670G-MNGV V1.9.05): it's `AT+CMQTTSUB`
+directly (there is no `AT+CMQTTSUBTOPIC` on this firmware -- an earlier
+version of this code assumed a two-step split and was wrong). What's
+still unverified is the async result line that's expected to follow it,
+and the whole incoming-message push sequence (`+CMQTTRXSTART`/
+`+CMQTTRXTOPIC`/`+CMQTTRXPAYLOAD`/`+CMQTTRXEND`) `mqtt_check_incoming()`
+expects -- unlike every other AT sequence in this codebase, that part has
+not been confirmed. If the folder-created ack never arrives, check the
+Serial monitor first (`[cmd]`/`[mqtt]`-prefixed lines) --
 `main_gnss_matcher.cpp`'s own header comment has the full caveat and
 where to look in the code.
 

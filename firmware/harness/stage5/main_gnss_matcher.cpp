@@ -50,18 +50,24 @@
  * already happened.
  *
  * IMPORTANT, flagged explicitly: the SUBSCRIBE side of this (topic
- * subscription via AT+CMQTTSUBTOPIC/AT+CMQTTSUB, and parsing the
- * modem's incoming-publish URC sequence, +CMQTTRXSTART/+CMQTTRXTOPIC/
- * +CMQTTRXPAYLOAD/+CMQTTRXEND) is NEW ground for this codebase -- every
- * other AT sequence here was built against real hardware or a
- * confirmed vendor manual section; this one was not. It follows the
- * same topic-then-payload two-step shape SIMCOM's AT+CMQTT family uses
- * for AT+CMQTTTOPIC/AT+CMQTTPAYLOAD (already proven in mqtt_publish()),
- * which is the best available basis without hardware/manual access
- * right now, but the exact command syntax and URC field layout are
- * UNVERIFIED. Bench-test this specifically (mqtt_subscribe() and
- * mqtt_check_incoming()) before trusting DEBUG_MODE_ENABLED's
- * command-triggered path on real hardware -- the boot-time
+ * subscription via AT+CMQTTSUB, and parsing the modem's incoming-publish
+ * URC sequence, +CMQTTRXSTART/+CMQTTRXTOPIC/+CMQTTRXPAYLOAD/
+ * +CMQTTRXEND) is NEW ground for this codebase -- every other AT
+ * sequence here was built against real hardware or a confirmed vendor
+ * manual section; this one largely was not, and the first guess at it
+ * was wrong. Real hardware (SIM7670G-MNGV V1.9.05) confirmed there is
+ * NO separate AT+CMQTTSUBTOPIC command on this firmware (it returns
+ * ERROR to its own "=?" query) -- the original two-step publish-style
+ * TOPIC-then-SUB split mqtt_subscribe() used was rejected outright.
+ * AT+CMQTTSUB=? answered "+CMQTTSUB: (0-1),(1-1024),(0-2),(0-1)", so
+ * subscribing is ONE data-entry command (client_index, topic_len, qos,
+ * dup), same '>' prompt convention as CMQTTTOPIC/CMQTTPAYLOAD (proven in
+ * mqtt_publish()) but merged into a single step -- see mqtt_subscribe()'s
+ * own comment for exactly what's now confirmed vs. still inferred (the
+ * async "+CMQTTSUB: <result>" line specifically). The incoming-message
+ * RX URC sequence mqtt_check_incoming() parses remains entirely
+ * UNVERIFIED -- bench-test that specifically before trusting
+ * DEBUG_MODE_ENABLED's command-triggered path end-to-end. The boot-time
  * heartbeat/lock/raw-packet publish path reuses only already-proven
  * mqtt_publish(), so that half carries no such caveat.
  *
@@ -940,18 +946,26 @@ static bool mqtt_subscribe(const char *topic)
     String resp;
     char cmd[64];
 
-    /* Diagnostic-first: this AT sequence is unverified (see this file's
-     * header comment), so every failure prints exactly what was sent and
-     * exactly what the modem sent back -- "resp empty/just the echo"
-     * (timed out with no reply at all -- possibly an unrecognised
-     * command name) reads very differently from "resp contains ERROR"
-     * (command recognised, rejected -- a syntax/parameter problem) or
-     * "resp contains something else entirely" (a real, different
-     * response format than assumed). Whichever it is, paste the printed
-     * [mqtt DEBUG] line back for diagnosis rather than guessing again. */
-    snprintf(cmd, sizeof(cmd), "AT+CMQTTSUBTOPIC=%d,%u,1", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
+    /* Real hardware (SIM7670G-MNGV V1.9.05), confirmed via
+     * debug_query_at_syntax(): AT+CMQTTSUBTOPIC does not exist on this
+     * firmware (ERROR to its own "=?" query) -- the original two-step
+     * publish-style TOPIC-then-SUB split this function used was simply
+     * wrong. AT+CMQTTSUB=? answered "+CMQTTSUB: (0-1),(1-1024),(0-2),
+     * (0-1)" -- <client_index>,<topic_len>,<qos>,<dup>, ONE data-entry
+     * command with the same '>' prompt convention CMQTTTOPIC/CMQTTPAYLOAD
+     * already use (proven in mqtt_publish()), just not split across two
+     * commands the way publish is. dup=0 (this is a fresh subscribe, not
+     * a retransmit). Still UNVERIFIED past the command's own parameter
+     * shape: whether a separate async "+CMQTTSUB: <client_index>,
+     * <result>" result line follows the write's OK (mirrored here from
+     * CMQTTCONNECT's proven pattern, not itself confirmed) -- if the next
+     * real-hardware capture shows "no +CMQTTSUB result line" where the
+     * write's OK otherwise looked fine, that's the next thing to fix
+     * (most likely: this firmware doesn't emit a separate result URC for
+     * SUB, so the write's own OK should be treated as success instead). */
+    snprintf(cmd, sizeof(cmd), "AT+CMQTTSUB=%d,%u,1,0", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
     if (!send_at_command_expect(cmd, resp, ">", 10000)) {
-        Serial.println("[mqtt FAIL] AT+CMQTTSUBTOPIC got no '>' prompt");
+        Serial.println("[mqtt FAIL] AT+CMQTTSUB got no '>' prompt");
         Serial.print("[mqtt DEBUG] sent: ");
         Serial.println(cmd);
         Serial.print("[mqtt DEBUG] modem replied: [");
@@ -971,15 +985,18 @@ static bool mqtt_subscribe(const char *topic)
         return false;
     }
 
-    snprintf(cmd, sizeof(cmd), "AT+CMQTTSUB=%d", MQTT_CLIENT_INDEX);
-    bool ok = send_at_command(cmd, resp, 10000);
+    resp = "";
+    if (!wait_for_token(resp, "+CMQTTSUB: ", 10000)) {
+        Serial.println("[mqtt FAIL] topic write OK'd but no +CMQTTSUB result line followed");
+        xSemaphoreGive(s_at_mutex);
+        return false;
+    }
+    finish_line_after(resp, "+CMQTTSUB: ", 5000);
+    int comma = resp.indexOf(',');
+    bool ok = (comma >= 0 && comma + 1 < (int)resp.length() && resp[comma + 1] == '0');
     if (!ok) {
-        Serial.println("[mqtt FAIL] AT+CMQTTSUB not OK'd");
-        Serial.print("[mqtt DEBUG] sent: ");
-        Serial.println(cmd);
-        Serial.print("[mqtt DEBUG] modem replied: [");
-        Serial.print(resp);
-        Serial.println("]");
+        Serial.print("[mqtt FAIL] +CMQTTSUB result: ");
+        Serial.println(resp);
     }
     xSemaphoreGive(s_at_mutex);
     return ok;
