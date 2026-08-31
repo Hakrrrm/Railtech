@@ -985,6 +985,31 @@ static bool mqtt_subscribe(const char *topic)
     return ok;
 }
 
+/* Real hardware (SIM7670G-MNGV V1.9.05) has now returned a fast ERROR to
+ * AT+CMQTTSUBTOPIC with plausible parameters -- meaning either the
+ * modem doesn't have that command at all, or it exists but wants
+ * different arguments; a bare ERROR doesn't distinguish the two. Rather
+ * than guess a third syntax blind, ask the modem itself: most SIMCOM AT
+ * commands support a `=?` test form that echoes back the parameter list
+ * they actually expect. Sends "<base_cmd>=?" and prints whatever comes
+ * back -- this is exactly the ground truth needed to fix
+ * mqtt_subscribe() for real, once captured from an actual boot. */
+static void debug_query_at_syntax(const char *base_cmd)
+{
+    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
+    String resp;
+    char cmd[48];
+    snprintf(cmd, sizeof(cmd), "%s=?", base_cmd);
+    send_at_command(cmd, resp, 5000); /* result ignored -- printing resp either way is the point */
+    xSemaphoreGive(s_at_mutex);
+
+    Serial.print("[mqtt DEBUG] ");
+    Serial.print(cmd);
+    Serial.print(" -> [");
+    Serial.print(resp);
+    Serial.println("]");
+}
+
 /* Persists ACROSS calls to mqtt_check_incoming() -- deliberately not a
  * local variable. A local `String resp` would be destroyed at the end
  * of every call, so a URC that happens to straddle two polls (this is
@@ -1731,6 +1756,16 @@ void setup()
                 }
 #if DEBUG_MODE_ENABLED
                 if (s_mqtt_ready) {
+                    /* Diagnostic-only, temporary: real hardware has
+                     * rejected AT+CMQTTSUBTOPIC with a fast ERROR
+                     * (unverified syntax, guessed twice, both wrong so
+                     * far) -- ask the modem for its own expected syntax
+                     * before trying again, rather than guess a third
+                     * time. Remove once mqtt_subscribe() is confirmed
+                     * working against real hardware. */
+                    debug_query_at_syntax("AT+CMQTTSUBTOPIC");
+                    debug_query_at_syntax("AT+CMQTTSUB");
+
                     Serial.print("[cmd] subscribing to ");
                     Serial.println(s_cmd_topic);
                     if (!mqtt_subscribe(s_cmd_topic)) {
