@@ -1067,10 +1067,25 @@ static bool mqtt_check_incoming(char *payload_out, size_t payload_out_len, unsig
 {
     xSemaphoreTake(s_at_mutex, portMAX_DELAY);
 
+    size_t before_len = s_incoming_buf.length();
     while (SerialAT.available()) {
         s_incoming_buf += (char)SerialAT.read();
     }
     if (s_incoming_buf.indexOf("+CMQTTRXSTART:") < 0) {
+        /* Diagnostic-only, temporary: the +CMQTTRXSTART: assumption
+         * itself is unverified (see this file's header comment), and by
+         * design this whole branch is otherwise SILENT so a normal 1 Hz
+         * poll with nothing pending doesn't spam the log -- which means
+         * if the assumption is wrong, this would previously give zero
+         * visibility into what the modem actually sent when a subscribed
+         * message arrived. Print it once, only when new bytes actually
+         * showed up this poll (not on every empty poll). Remove once
+         * mqtt_check_incoming()'s real URC format is confirmed. */
+        if (s_incoming_buf.length() != before_len) {
+            Serial.print("[mqtt DEBUG] unexpected incoming bytes (no +CMQTTRXSTART: match): [");
+            Serial.print(s_incoming_buf);
+            Serial.println("]");
+        }
         /* Nothing pending -- the common case, every single poll. Don't
          * block waiting for something that may never come. Defensive
          * cap: this branch should never accumulate much (every other AT
