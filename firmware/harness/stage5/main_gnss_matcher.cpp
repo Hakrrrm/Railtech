@@ -940,9 +940,23 @@ static bool mqtt_subscribe(const char *topic)
     String resp;
     char cmd[64];
 
+    /* Diagnostic-first: this AT sequence is unverified (see this file's
+     * header comment), so every failure prints exactly what was sent and
+     * exactly what the modem sent back -- "resp empty/just the echo"
+     * (timed out with no reply at all -- possibly an unrecognised
+     * command name) reads very differently from "resp contains ERROR"
+     * (command recognised, rejected -- a syntax/parameter problem) or
+     * "resp contains something else entirely" (a real, different
+     * response format than assumed). Whichever it is, paste the printed
+     * [mqtt DEBUG] line back for diagnosis rather than guessing again. */
     snprintf(cmd, sizeof(cmd), "AT+CMQTTSUBTOPIC=%d,%u,1", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
     if (!send_at_command_expect(cmd, resp, ">", 10000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTSUBTOPIC got no '>' prompt");
+        Serial.print("[mqtt DEBUG] sent: ");
+        Serial.println(cmd);
+        Serial.print("[mqtt DEBUG] modem replied: [");
+        Serial.print(resp);
+        Serial.println("]");
         xSemaphoreGive(s_at_mutex);
         return false;
     }
@@ -950,6 +964,9 @@ static bool mqtt_subscribe(const char *topic)
     resp = "";
     if (!wait_for_token(resp, "\r\nOK\r\n", 3000)) {
         Serial.println("[mqtt FAIL] subscribe topic write not OK'd");
+        Serial.print("[mqtt DEBUG] modem replied: [");
+        Serial.print(resp);
+        Serial.println("]");
         xSemaphoreGive(s_at_mutex);
         return false;
     }
@@ -958,6 +975,11 @@ static bool mqtt_subscribe(const char *topic)
     bool ok = send_at_command(cmd, resp, 10000);
     if (!ok) {
         Serial.println("[mqtt FAIL] AT+CMQTTSUB not OK'd");
+        Serial.print("[mqtt DEBUG] sent: ");
+        Serial.println(cmd);
+        Serial.print("[mqtt DEBUG] modem replied: [");
+        Serial.print(resp);
+        Serial.println("]");
     }
     xSemaphoreGive(s_at_mutex);
     return ok;
