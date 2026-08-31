@@ -520,9 +520,26 @@ static bool send_at_command(const char *cmd, String &response, unsigned long tim
  * to raw bytes written directly to SerialAT (the topic/payload writes in
  * mqtt_publish()) rather than to an AT command. Ported verbatim from
  * cellular-mqtt-test/main_cellular_mqtt_test.cpp, already proven on real
- * hardware there. */
+ * hardware there -- with one real bug fixed since: the token check used
+ * to live ONLY inside the "a new byte just arrived" branch, so if
+ * expect_token was already present in `response` BEFORE this function
+ * was even called, it would never be noticed -- the function would just
+ * burn the full timeout_ms waiting for a byte that would trigger a check
+ * that was never going to find anything new, then return false despite
+ * the token being right there the whole time. Never mattered at the
+ * call sites that reset `response = ""` immediately before calling (an
+ * empty string trivially contains no token, so the missing check was a
+ * no-op there) -- but real hardware caught it for real in
+ * mqtt_check_incoming(), which deliberately does NOT reset s_incoming_buf
+ * between waits (it has to keep building on prior content): a short
+ * message can arrive over UART fast enough that the ENTIRE sequence,
+ * "+CMQTTRXPAYLOAD:" included, was already sitting in the buffer before
+ * this function was ever called to wait for it. */
 static bool wait_for_token(String &response, const char *expect_token, unsigned long timeout_ms)
 {
+    if (response.indexOf(expect_token) >= 0) {
+        return true;
+    }
     unsigned long start = millis();
     while (millis() - start < timeout_ms) {
         while (SerialAT.available()) {
