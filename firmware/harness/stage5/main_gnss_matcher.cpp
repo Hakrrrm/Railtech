@@ -160,12 +160,11 @@ extern "C" {
 
 /* Cellular MQTT (Stage 7) -- same constants/values as
  * cellular-mqtt-test/main_cellular_mqtt_test.cpp, proven on real
- * hardware there. MQTT_CLIENT_INDEX_MATCHER and the "-matcher" client-id
- * suffix below are deliberately distinct from that standalone harness's
- * "-cell" suffix so the two can never collide with the same MQTT client
- * id on the broker if both happened to run against the same LRV_ID at
- * once (e.g. bring-up test left running while flashing the real
- * matcher). */
+ * hardware there. The "-matcher" client-id suffix below is deliberately
+ * distinct from that standalone harness's "-cell" suffix so the two can
+ * never collide with the same MQTT client id on the broker if both
+ * happened to run against the same LRV_ID at once (e.g. bring-up test
+ * left running while flashing the real matcher). */
 #define MQTT_CLIENT_INDEX 0
 #define MQTT_KEEPALIVE_S 60UL
 #define MQTT_CHECK_INTERVAL_MS 60000UL /* how often loop() checks/retries the cellular MQTT link */
