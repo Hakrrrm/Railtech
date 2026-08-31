@@ -804,6 +804,44 @@ static bool set_apn(const char *apn)
  * return, so the whole AT exchange it performs (including any async URC
  * wait) is atomic with respect to gnss_matcher_task's own AT traffic. */
 
+#if DEBUG_MODE_ENABLED
+/* Drains and discards any further bytes for up to max_ms, exiting early
+ * (~50ms) once a beat passes with nothing new. Real hardware confirmed
+ * several fire-and-forget AT commands here (AT+NETCLOSE, AT+CMQTTSTOP,
+ * AT+CMQTTPUB at least) each trigger their own delayed async
+ * confirmation URC ("+NETCLOSE: 0", "+CMQTTSTOP: 0", "+CMQTTPUB: 0,0")
+ * that this code has always ignored -- harmless normally, since the
+ * next AT command's own opening flush would just discard them for free.
+ * Not harmless once DEBUG_MODE_ENABLED: that same flush now redirects
+ * into s_incoming_buf instead of discarding (see
+ * send_at_command_expect()'s comment), specifically so a genuinely
+ * unsolicited incoming-push URC is never silently eaten -- but that
+ * means this routine confirmation noise piles up in the SAME buffer,
+ * burying the one signal actually being watched for. Called at the tail
+ * of net_open()/mqtt_start()/mqtt_publish(), right before releasing
+ * s_at_mutex, so their own known-noisy trailing URC never reaches
+ * s_incoming_buf at all. Not needed outside DEBUG_MODE_ENABLED, so this
+ * whole function (and its call sites) are compiled out entirely then --
+ * zero cost, zero behaviour change, to the regular build. */
+static void at_drain_trailing_noise(unsigned long max_ms)
+{
+    unsigned long start = millis();
+    while (millis() - start < max_ms) {
+        bool got_any = false;
+        while (SerialAT.available()) {
+            SerialAT.read();
+            got_any = true;
+        }
+        if (!got_any) {
+            delay(50);
+            if (!SerialAT.available()) {
+                break;
+            }
+        }
+    }
+}
+#endif /* DEBUG_MODE_ENABLED */
+
 static bool net_open()
 {
     xSemaphoreTake(s_at_mutex, portMAX_DELAY);
@@ -825,6 +863,9 @@ static bool net_open()
             ok = true;
         }
     }
+#if DEBUG_MODE_ENABLED
+    at_drain_trailing_noise(300); /* AT+NETCLOSE's own "+NETCLOSE: 0" -- see this function's comment */
+#endif
     xSemaphoreGive(s_at_mutex);
     return ok;
 }
@@ -839,6 +880,13 @@ static bool mqtt_start()
     delay(20);
 
     bool ok = send_at_command_expect("AT+CMQTTSTART", resp, "+CMQTTSTART: 0", 30000);
+#if DEBUG_MODE_ENABLED
+    /* AT+CMQTTDISC/CMQTTREL/CMQTTSTOP each plausibly trigger their own
+     * delayed confirmation URC the same way CMQTTSTOP's "+CMQTTSTOP: 0"
+     * was confirmed to -- drain generously since three commands' worth
+     * of trailing noise could be pending here, not just one. */
+    at_drain_trailing_noise(600);
+#endif
     xSemaphoreGive(s_at_mutex);
     return ok;
 }
@@ -923,20 +971,22 @@ static bool mqtt_publish(const char *topic, const char *payload)
     /* QoS 0, matching cellular-mqtt-test's own proven value -- NOT QoS 1.
      * An earlier version of this function requested QoS 1 without ever
      * waiting for or checking the completion URC that would confirm the
-     * broker actually acked it (the modem's manual documents one, but
-     * its exact name/format hasn't been confirmed against real hardware
-     * or the vendor manual, and this project's own discipline is to
-     * never guess at AT behavior). Requesting QoS 1 but not checking its
-     * ack provides no stronger guarantee than QoS 0 while adding broker
-     * handshake overhead for nothing -- reverted rather than ship a
-     * guarantee the code doesn't actually implement. Implementing real
-     * QoS 1 confirmation (mirroring the CMQTTCONNECT async-URC pattern
-     * above) is future work once that URC is confirmed. */
+     * broker actually acked it. That URC's format is no longer a total
+     * unknown -- a DEBUG_MODE_ENABLED capture caught "+CMQTTPUB: 0,0"
+     * arriving after a QoS-0 publish's own OK, confirming the shape is
+     * "+CMQTTPUB: <client_index>,<result>", same as CMQTTCONNECT's. Not
+     * wired up here even so: this function's job is still just "publish
+     * and report the synchronous OK", and moving to real QoS 1
+     * confirmation is a deliberate follow-up, not a side effect of a
+     * debug-mode diagnostic fix. */
     snprintf(cmd, sizeof(cmd), "AT+CMQTTPUB=%d,0,60,0", MQTT_CLIENT_INDEX);
     bool ok = send_at_command(cmd, resp, 10000);
     if (!ok) {
         Serial.println("[mqtt FAIL] AT+CMQTTPUB not OK'd");
     }
+#if DEBUG_MODE_ENABLED
+    at_drain_trailing_noise(300); /* AT+CMQTTPUB's own "+CMQTTPUB: <idx>,<result>" -- see above */
+#endif
     xSemaphoreGive(s_at_mutex);
     return ok;
 }
