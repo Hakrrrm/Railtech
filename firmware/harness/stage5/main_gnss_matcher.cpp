@@ -1175,23 +1175,35 @@ static bool mqtt_check_incoming(char *payload_out, size_t payload_out_len, unsig
 
     /* Something started arriving -- now it's worth waiting out the rest
      * of the sequence properly rather than bailing on this same poll.
-     * From here on, every return path clears s_incoming_buf first: this
-     * attempt is being resolved one way or another, so nothing should
-     * carry over to the next poll. */
+     * From here on, every return path prints whatever was actually
+     * accumulated before clearing s_incoming_buf: a real +CMQTTRXSTART:
+     * match landed (this is no longer a "maybe" -- confirmed on real
+     * hardware), so any drop from here on is worth full visibility into,
+     * the same "stop guessing, print what actually arrived" pattern that
+     * already found the AT+CMQTTSUB fix. */
     if (!wait_for_token(s_incoming_buf, "+CMQTTRXPAYLOAD:", timeout_ms)) {
         Serial.println("[mqtt] incoming message start seen but no +CMQTTRXPAYLOAD -- dropping");
+        Serial.print("[mqtt DEBUG] accumulated: [");
+        Serial.print(s_incoming_buf);
+        Serial.println("]");
         s_incoming_buf = "";
         xSemaphoreGive(s_at_mutex);
         return false;
     }
     if (!finish_line_after(s_incoming_buf, "+CMQTTRXPAYLOAD:", 2000)) {
         Serial.println("[mqtt] incoming message: +CMQTTRXPAYLOAD line never completed -- dropping");
+        Serial.print("[mqtt DEBUG] accumulated: [");
+        Serial.print(s_incoming_buf);
+        Serial.println("]");
         s_incoming_buf = "";
         xSemaphoreGive(s_at_mutex);
         return false;
     }
     if (!wait_for_token(s_incoming_buf, "+CMQTTRXEND:", timeout_ms)) {
         Serial.println("[mqtt] incoming message: no +CMQTTRXEND -- dropping");
+        Serial.print("[mqtt DEBUG] accumulated: [");
+        Serial.print(s_incoming_buf);
+        Serial.println("]");
         s_incoming_buf = "";
         xSemaphoreGive(s_at_mutex);
         return false;
@@ -1950,12 +1962,17 @@ void loop()
      * MQTT health-check cadence above -- a command should be noticed
      * quickly, not only once a minute. Only worth polling once actually
      * subscribed (s_mqtt_ready and s_cmd_topic populated); mqtt_check_incoming()
-     * itself is cheap/non-blocking when nothing is pending. */
+     * itself is cheap/non-blocking when nothing is pending. Real hardware
+     * confirmed +CMQTTRXSTART: itself arrives, but the rest of the
+     * sequence didn't complete within the previous 500ms budget -- bumped
+     * to 3000ms in case that was simply too tight for the modem to finish
+     * the URC once it starts (only paid when a message actually starts
+     * arriving, not on the common empty poll). */
     static unsigned long s_last_cmd_check_ms = 0;
     if (s_mqtt_ready && now - s_last_cmd_check_ms >= DEBUG_INCOMING_CHECK_INTERVAL_MS) {
         s_last_cmd_check_ms = now;
         char payload[128];
-        if (mqtt_check_incoming(payload, sizeof(payload), 500)) {
+        if (mqtt_check_incoming(payload, sizeof(payload), 3000)) {
             handle_incoming_cmd(payload);
         }
     }
