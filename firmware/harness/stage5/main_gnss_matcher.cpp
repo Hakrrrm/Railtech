@@ -260,6 +260,26 @@ static volatile bool s_debug_restart_requested = false;
  * never in the middle of one. */
 static SemaphoreHandle_t s_at_mutex;
 
+#if DEBUG_MODE_ENABLED
+/* Persists ACROSS every AT exchange in this file, not just calls to
+ * mqtt_check_incoming() -- see send_at_command_expect()'s own comment
+ * for why. Also persists across individual mqtt_check_incoming() polls
+ * for a second reason: a local `String resp` there would be destroyed
+ * at the end of every call, so a URC that happens to straddle two polls
+ * (mqtt_check_incoming() runs once a second; nothing guarantees the
+ * modem finishes sending "+CMQTTRXSTART:..." within one poll's
+ * non-blocking peek) would have its already-read first half silently
+ * discarded, and the second half would arrive on the next poll looking
+ * like it never had a "+CMQTTRXSTART:" prefix at all -- a real,
+ * found-on-review bug in an earlier version of that function, not
+ * hypothetical. Cleared by mqtt_check_incoming() after every attempt
+ * that actually saw a "+CMQTTRXSTART:" (success or give-up), so a
+ * malformed/incomplete message doesn't wedge future polls; NOT cleared
+ * on the common "nothing pending yet" fast path, so a genuinely partial
+ * start is retained for the next poll to complete. */
+static String s_incoming_buf;
+#endif /* DEBUG_MODE_ENABLED */
+
 /* ---- Core 0 -> Core 1 queue message -------------------------------- */
 
 struct SegDoneMsg {
@@ -441,14 +461,33 @@ static bool sd_create_debug_session(char *session_dir_out, size_t session_dir_ou
  * that arrives AFTER the OK), an ERROR line, or timeout. Same read
  * loop GpsOptimisation.ino's own rawGpsQuery() uses for AT+CGNSSINFO
  * -- generalised here so bring-up and the 1 Hz poll share one
- * implementation. */
+ * implementation.
+ *
+ * DEBUG_MODE_ENABLED only: the "drain whatever's sitting unread" step
+ * below used to just discard those bytes -- fine normally, but a real
+ * problem once something ELSE (the modem's own unsolicited push-message
+ * URC on the subscribed cmd topic) can also legitimately show up in that
+ * same buffer. gnss_matcher_task calls this once a second for its own
+ * GNSS poll, same cadence as mqtt_check_incoming()'s poll for an
+ * incoming command -- so an incoming URC that happened to arrive in the
+ * window between the two could get silently eaten right here before
+ * mqtt_check_incoming() ever got a chance to see it, no matter how
+ * correct that function's own parsing turned out to be. Redirecting the
+ * drain into s_incoming_buf instead of discarding it means no AT
+ * exchange in this file can silently swallow an unsolicited URC anymore
+ * -- whatever shows up here is exactly what mqtt_check_incoming() would
+ * otherwise have polled for later. */
 static bool send_at_command_expect(const char *cmd, String &response,
                                     const char *expect_token,
                                     unsigned long timeout_ms)
 {
     response = "";
     while (SerialAT.available()) {
+#if DEBUG_MODE_ENABLED
+        s_incoming_buf += (char)SerialAT.read();
+#else
         SerialAT.read();
+#endif
     }
     SerialAT.println(cmd);
 
@@ -1026,21 +1065,6 @@ static void debug_query_at_syntax(const char *base_cmd)
     Serial.print(resp);
     Serial.println("]");
 }
-
-/* Persists ACROSS calls to mqtt_check_incoming() -- deliberately not a
- * local variable. A local `String resp` would be destroyed at the end
- * of every call, so a URC that happens to straddle two polls (this is
- * called once a second; nothing guarantees the modem finishes sending
- * "+CMQTTRXSTART:..." within one poll's non-blocking peek) would have
- * its already-read first half silently discarded, and the second half
- * would arrive on the next poll looking like it never had a
- * "+CMQTTRXSTART:" prefix at all -- a real, found-on-review bug in an
- * earlier version of this function, not hypothetical. Cleared after
- * every attempt that actually saw a "+CMQTTRXSTART:" (success or
- * give-up), so a malformed/incomplete message doesn't wedge future
- * polls; NOT cleared on the common "nothing pending yet" fast path, so
- * a genuinely partial start is retained for the next poll to complete. */
-static String s_incoming_buf;
 
 /*
  * Non-blocking-ish peek for an unsolicited incoming-publish URC on
