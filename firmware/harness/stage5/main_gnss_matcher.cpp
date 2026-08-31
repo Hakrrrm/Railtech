@@ -49,6 +49,23 @@
  * lock-acquired notice rather than replaying heartbeats for a wait that
  * already happened.
  *
+ * On top of that one-shot boot/session sequence, also publishes a
+ * DEBUG_STATUS heartbeat every DEBUG_STATUS_INTERVAL_MS (30 s) for the
+ * device's ENTIRE uptime, not just the first few seconds after a lock --
+ * the most recently known GPS fix state (fix mode, satellite count,
+ * HDOP, lat/lon) and current SD status (ready or not, which folder is
+ * currently being logged into). This is the actual "watch a test over
+ * MQTT instead of the Serial monitor" capability: the boot sequence
+ * alone only ever answers "did it lock, what did the first few fixes
+ * look like", then goes silent -- this heartbeat is what still says
+ * something an hour into a test if GPS drops out or the SD card fails.
+ * Deliberately does NOT cover cellular/MQTT link health (if the link is
+ * down, this heartbeat obviously can't publish at all -- that state is
+ * only visible on Serial or by noticing DEBUG_STATUS itself stopped) or
+ * IMU/matcher activity (out of scope for this pass; SEG_DONE on the
+ * events topic already gives ongoing visibility into whether segments
+ * are actually completing).
+ *
  * The SUBSCRIBE side of this (AT+CMQTTSUB, and parsing the modem's
  * incoming-publish URC sequence +CMQTTRXSTART/+CMQTTRXTOPIC/
  * +CMQTTRXPAYLOAD/+CMQTTRXEND) started as new, unverified ground for
@@ -180,6 +197,7 @@ extern "C" {
 #define DEBUG_RAW_PACKET_COUNT 5 /* how many post-lock raw fixes go to the debug topic */
 #define DEBUG_INCOMING_CHECK_INTERVAL_MS 1000UL /* how often loop() polls for an incoming cmd */
 #define DEBUG_SD_SESSION_DIR_MAX 32 /* "/lrv_log/dbg" + up to a few digits, well under this */
+#define DEBUG_STATUS_INTERVAL_MS 30000UL /* how often the ongoing GPS/SD status heartbeat publishes */
 
 /* Fix-quality gate, applied before the fix is allowed to move the map
  * matcher. PDOP is the primary figure: it describes the 3D solution
@@ -1476,8 +1494,82 @@ static void gnss_matcher_task(void *arg)
     map_matcher_state_t matcher_st;
     map_matcher_init(&matcher_st);
 
+#if DEBUG_MODE_ENABLED
+    /* Ongoing field-debug status heartbeat -- GPS fix state + SD status,
+     * every DEBUG_STATUS_INTERVAL_MS, so a test can be monitored entirely
+     * over MQTT without needing the Serial monitor. Distinct from the
+     * boot/session-start heartbeat/lock/raw-packet sequence above (which
+     * only covers the first few seconds after a lock), this runs for the
+     * device's whole uptime. last_known_fix is updated on every
+     * successful AT+CGNSSINFO parse (valid fix or not -- "no fix"
+     * (fix_mode 0) is itself useful status, not just a valid fix), so the
+     * periodic report always reflects the most recent poll even if this
+     * exact tick's poll failed outright or was skipped (stationary). */
+    gnss_fix_t last_known_fix = {};
+    bool have_known_fix = false;
+    unsigned long last_status_publish_ms = 0;
+#endif
+
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL_MS));
+
+#if DEBUG_MODE_ENABLED
+        /* Deliberately BEFORE the stationary-skip below -- that `continue`
+         * would otherwise silently stop this heartbeat too whenever the
+         * vehicle is stationary, which is exactly when "is everything
+         * still alive and healthy" matters most for field debugging. */
+        {
+            unsigned long status_now = millis();
+            if (status_now - last_status_publish_ms >= DEBUG_STATUS_INTERVAL_MS) {
+                last_status_publish_ms = status_now;
+
+                char lat_s[16] = "null", lon_s[16] = "null", hdop_s[8] = "null";
+                if (have_known_fix) {
+                    format_deg_e7(last_known_fix.lat_e7, lat_s, sizeof(lat_s));
+                    format_deg_e7(last_known_fix.lon_e7, lon_s, sizeof(lon_s));
+                    format_x10(last_known_fix.hdop_x10, hdop_s, sizeof(hdop_s));
+                }
+
+                /* sd_session mirrors what sd_log_json()/sd_log_raw_json()
+                 * are actually writing to right now -- read under
+                 * s_sd_mutex, same rule as those functions, so this never
+                 * sees a path half-written by sd_create_debug_session(). */
+                char sd_session[sizeof(s_debug_session_events_file)];
+                xSemaphoreTake(s_sd_mutex, portMAX_DELAY);
+                bool has_session = (s_debug_session_events_file[0] != '\0');
+                if (has_session) {
+                    strncpy(sd_session, s_debug_session_events_file, sizeof(sd_session) - 1);
+                    sd_session[sizeof(sd_session) - 1] = '\0';
+                }
+                xSemaphoreGive(s_sd_mutex);
+
+                char status_json[256];
+                if (have_known_fix) {
+                    snprintf(status_json, sizeof(status_json),
+                        "{\"v\":1,\"ev\":\"DEBUG_STATUS\",\"lrv\":\"%s\","
+                        "\"gps_fix_mode\":%u,\"gps_nsv\":%u,\"gps_hdop\":%s,"
+                        "\"gps_lat\":%s,\"gps_lon\":%s,"
+                        "\"sd_ready\":%s,\"sd_session\":\"%s\"}",
+                        MQTT_LRV_ID, (unsigned)last_known_fix.fix_mode, (unsigned)last_known_fix.nsv, hdop_s,
+                        lat_s, lon_s,
+                        s_sd_ready ? "true" : "false",
+                        has_session ? sd_session : "default");
+                } else {
+                    /* No successful AT+CGNSSINFO parse yet at all -- omit
+                     * the GPS fields entirely rather than printing
+                     * placeholder zeros that would look like a real
+                     * "fix_mode 0" report. */
+                    snprintf(status_json, sizeof(status_json),
+                        "{\"v\":1,\"ev\":\"DEBUG_STATUS\",\"lrv\":\"%s\","
+                        "\"sd_ready\":%s,\"sd_session\":\"%s\"}",
+                        MQTT_LRV_ID,
+                        s_sd_ready ? "true" : "false",
+                        has_session ? sd_session : "default");
+                }
+                debug_publish(s_debug_topic, status_json);
+            }
+        }
+#endif
 
         if (s_imu_stationary) {
             continue; /* imu_task already logged the stationary/motion transition */
@@ -1515,6 +1607,14 @@ static void gnss_matcher_task(void *arg)
             Serial.println("]");
             continue;
         }
+#if DEBUG_MODE_ENABLED
+        /* Remember this parse regardless of fix.valid -- the periodic
+         * DEBUG_STATUS heartbeat's whole point is to report the most
+         * recent poll result, and "still no fix" (fix_mode 0) is exactly
+         * as reportable as a real one. */
+        last_known_fix = fix;
+        have_known_fix = true;
+#endif
         if (!fix.valid) {
             Serial.printf("[gnss] no fix yet (fixMode=%u, nsv=%u)\n",
                            (unsigned)fix.fix_mode, (unsigned)fix.nsv);

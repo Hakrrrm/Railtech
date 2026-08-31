@@ -134,13 +134,45 @@ With `DEBUG_MODE_ENABLED=1`, subscribe your MQTT client to
 2. One `{"ev":"DEBUG_GPS_LOCKED",...}` the moment the first fix arrives.
 3. Five `{"ev":"GNSS_RAW",...}` packets (the same shape SD's
    `gnss_raw.ndjson` gets, one per fix) immediately after.
-4. Silence on `debug` from then on -- `events` keeps publishing SEG_DONE
-   as normal whenever a segment completes; nothing on `debug` again
-   until the next `debug_start_session` command or reboot.
+4. This one-shot sequence goes quiet after that -- `events` keeps
+   publishing SEG_DONE as normal whenever a segment completes, and
+   `debug` switches to the ongoing status heartbeat described below;
+   nothing else from this specific sequence happens again until the next
+   `debug_start_session` command or reboot.
 
 No SD folder is created for this automatic run -- it logs to the default
 `/lrv_log/events.ndjson` / `/lrv_log/gnss_raw.ndjson`, same files as
 `DEBUG_MODE_ENABLED=0` always uses.
+
+### Ongoing status heartbeat (watching a test without the Serial monitor)
+
+Independent of the one-shot sequence above, and for as long as the
+device is powered on, `lrv/splrt/D07/debug` also gets a status heartbeat
+every 30 seconds:
+
+```json
+{"v":1,"ev":"DEBUG_STATUS","lrv":"D07","gps_fix_mode":3,"gps_nsv":30,"gps_hdop":0.5,"gps_lat":1.353855,"gps_lon":103.688933,"sd_ready":true,"sd_session":"default"}
+```
+
+- `gps_fix_mode`/`gps_nsv`/`gps_hdop`/`gps_lat`/`gps_lon`: the most
+  recently polled GNSS state (0/2/3 = no fix/2D/3D). Reflects the last
+  successful poll even if the most recent tick's poll failed or was
+  skipped (e.g. the vehicle was briefly stationary) -- these fields are
+  omitted entirely (not zeroed) if no successful poll has happened yet
+  at all, e.g. in the first second or two after boot.
+- `sd_ready`: whether the SD card initialised correctly.
+- `sd_session`: `"default"` normally, or the active `/lrv_log/dbgN` path
+  if a `debug_start_session` command is currently in effect.
+
+This is the actual "monitor a test entirely over MQTT" capability --
+the one-shot sequence above only ever answers "did it lock, what did the
+first few fixes look like" and then falls silent; this heartbeat is what
+still tells you something an hour into a test if GPS drops out or the SD
+card fails. It does NOT currently cover cellular/MQTT link health (if
+the link itself is down, no heartbeat can arrive at all -- watch for the
+heartbeat simply stopping) or IMU/matcher activity (`events`' own
+SEG_DONE messages are still the way to see segments actually
+completing).
 
 ### Testing the `debug_start_session` command
 
