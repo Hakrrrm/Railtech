@@ -166,21 +166,18 @@ Expect, on `lrv/splrt/D07/debug`:
 Sending the command again starts a new folder (`dbgN+1`) and repeats the
 sequence.
 
-**Bench-test this command path before trusting it.** Boot-time
-diagnostics (above) only reuse the already-hardware-proven MQTT publish
-path. The command path additionally needs the modem to *subscribe* and
-receive an incoming push. The subscribe command itself is now confirmed
-against real hardware (SIM7670G-MNGV V1.9.05): it's `AT+CMQTTSUB`
-directly (there is no `AT+CMQTTSUBTOPIC` on this firmware -- an earlier
-version of this code assumed a two-step split and was wrong). What's
-still unverified is the async result line that's expected to follow it,
-and the whole incoming-message push sequence (`+CMQTTRXSTART`/
-`+CMQTTRXTOPIC`/`+CMQTTRXPAYLOAD`/`+CMQTTRXEND`) `mqtt_check_incoming()`
-expects -- unlike every other AT sequence in this codebase, that part has
-not been confirmed. If the folder-created ack never arrives, check the
-Serial monitor first (`[cmd]`/`[mqtt]`-prefixed lines) --
-`main_gnss_matcher.cpp`'s own header comment has the full caveat and
-where to look in the code.
+**Confirmed working end-to-end on real hardware** (SIM7670G-MNGV
+V1.9.05): subscribing is `AT+CMQTTSUB=<client_index>,<topic_len>,<qos>,
+<dup>` directly (there is no `AT+CMQTTSUBTOPIC` on this firmware -- an
+earlier version of this code assumed a two-step split and was wrong),
+and a `debug_start_session` command sent from a real MQTT client has
+been received, parsed, and acted on (SD folder created, MQTT ack
+published). If it's not working for you, check the Serial monitor first
+(`[cmd]`/`[mqtt]`-prefixed lines) -- one real gotcha already hit during
+bring-up: some MQTT clients auto-convert straight quotes to curly/smart
+quotes as you type the payload, which used to be rejected outright as
+an unrecognised command (fixed -- the match is quote-style-agnostic
+now, but worth knowing if you ever add a stricter command later).
 
 ## Build stages
 

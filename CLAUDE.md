@@ -16,9 +16,27 @@ have the correction survive the device losing power at any point before
 it's confirmed applied.
 
 **Current state this builds on:**
-- MQTT today is publish-only, QoS 0 (`firmware/harness/stage3/main_hotspot_test.cpp`,
-  `s_mqtt.publish(..., false)`) -- no `subscribe()` anywhere yet, and no
-  backend-to-device push path exists at all.
+- Update: a real subscribe/receive path now exists and is CONFIRMED
+  working end-to-end on real hardware (SIM7670G-MNGV V1.9.05), built for
+  the DEBUG_MODE_ENABLED feature on `stage-7-debug-mode`
+  (`firmware/harness/stage5/main_gnss_matcher.cpp`) -- `mqtt_subscribe()`
+  (one `AT+CMQTTSUB=<client_index>,<topic_len>,<qos>,<dup>` data-entry
+  command, QoS 1) and `mqtt_check_incoming()` (parses the modem's
+  `+CMQTTRXSTART`/`+CMQTTRXTOPIC`/`+CMQTTRXPAYLOAD`/`+CMQTTRXEND`
+  incoming-push URC sequence, also now confirmed against real hardware).
+  This work should reuse that AT-command layer directly rather than
+  rediscovering it -- see that file's header comment and
+  `mqtt_subscribe()`/`mqtt_check_incoming()`'s own comments for exactly
+  what's proven. `s_cmd_topic` there is `lrv/{FLEET}/{LRV_ID}/cmd`,
+  matching this note's own `lrv/{fleet}/{id}/cmd/set_odo` sketch below --
+  the mileage-correction command could live on the same topic (with a
+  real dispatch/parse step, unlike DEBUG_MODE_ENABLED's current loose
+  substring match, which is only good enough for a single fixed-shape
+  debug command) or a sibling one.
+- Stage 3's Wi-Fi harness (`firmware/harness/stage3/main_hotspot_test.cpp`,
+  `s_mqtt.publish(..., false)`) is still publish-only, QoS 0, and
+  separate from the cellular path above -- not relevant to this feature,
+  which targets Stage 7 (cellular).
 - `supabase/schema.sql`'s `mileage_anchors` table already models the
   backend side of a manual correction (`value_km`, `override`,
   `technician_id`, `gnss_odo_km`, `divergence_km`, `superseded_by`) --

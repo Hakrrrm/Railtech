@@ -41,9 +41,9 @@
  * raw fixes) to a separate lrv/{FLEET}/{LRV_ID}/debug topic, and
  * subscribe to lrv/{FLEET}/{LRV_ID}/cmd for a debug_start_session
  * command that creates a fresh SD logging folder and re-runs that same
- * sequence into it. See main_gnss_matcher.cpp's header comment for the
- * full design, and its subscribe/incoming-message AT command comments
- * for what's UNVERIFIED against real hardware. */
+ * sequence into it -- confirmed working end-to-end on real hardware
+ * (SIM7670G-MNGV V1.9.05). See main_gnss_matcher.cpp's header comment
+ * for the full design. */
 #define DEBUG_MODE_ENABLED 0
 
 #endif /* CONFIG_H */

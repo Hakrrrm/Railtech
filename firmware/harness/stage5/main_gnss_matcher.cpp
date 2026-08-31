@@ -49,27 +49,26 @@
  * lock-acquired notice rather than replaying heartbeats for a wait that
  * already happened.
  *
- * IMPORTANT, flagged explicitly: the SUBSCRIBE side of this (topic
- * subscription via AT+CMQTTSUB, and parsing the modem's incoming-publish
- * URC sequence, +CMQTTRXSTART/+CMQTTRXTOPIC/+CMQTTRXPAYLOAD/
- * +CMQTTRXEND) is NEW ground for this codebase -- every other AT
- * sequence here was built against real hardware or a confirmed vendor
- * manual section; this one largely was not, and the first guess at it
- * was wrong. Real hardware (SIM7670G-MNGV V1.9.05) confirmed there is
- * NO separate AT+CMQTTSUBTOPIC command on this firmware (it returns
- * ERROR to its own "=?" query) -- the original two-step publish-style
- * TOPIC-then-SUB split mqtt_subscribe() used was rejected outright.
- * AT+CMQTTSUB=? answered "+CMQTTSUB: (0-1),(1-1024),(0-2),(0-1)", so
- * subscribing is ONE data-entry command (client_index, topic_len, qos,
- * dup), same '>' prompt convention as CMQTTTOPIC/CMQTTPAYLOAD (proven in
- * mqtt_publish()) but merged into a single step -- see mqtt_subscribe()'s
- * own comment for exactly what's now confirmed vs. still inferred (the
- * async "+CMQTTSUB: <result>" line specifically). The incoming-message
- * RX URC sequence mqtt_check_incoming() parses remains entirely
- * UNVERIFIED -- bench-test that specifically before trusting
- * DEBUG_MODE_ENABLED's command-triggered path end-to-end. The boot-time
- * heartbeat/lock/raw-packet publish path reuses only already-proven
- * mqtt_publish(), so that half carries no such caveat.
+ * The SUBSCRIBE side of this (AT+CMQTTSUB, and parsing the modem's
+ * incoming-publish URC sequence +CMQTTRXSTART/+CMQTTRXTOPIC/
+ * +CMQTTRXPAYLOAD/+CMQTTRXEND) started as new, unverified ground for
+ * this codebase -- every other AT sequence here was built against real
+ * hardware or a confirmed vendor manual section; this one largely was
+ * not, and the first guess (a publish-style two-step
+ * AT+CMQTTSUBTOPIC-then-AT+CMQTTSUB split) was wrong, rejected outright
+ * by real hardware (SIM7670G-MNGV V1.9.05; that command doesn't exist on
+ * this firmware at all). Since fixed and CONFIRMED END-TO-END on real
+ * hardware: subscribing is one AT+CMQTTSUB=<client_index>,<topic_len>,
+ * <qos>,<dup> data-entry command (see mqtt_subscribe()'s own comment),
+ * and the debug_start_session command has been received, parsed, and
+ * acted on (SD folder created, MQTT ack published) against a real
+ * broker. One real bug surfaced and got fixed along the way:
+ * wait_for_token() didn't check for its target token already being
+ * present in the buffer before waiting for new bytes -- harmless at
+ * every other call site (all reset their buffer to empty first) but not
+ * in mqtt_check_incoming(), which deliberately keeps accumulating across
+ * the whole incoming-message sequence (see wait_for_token()'s own
+ * comment).
  *
  * Also fixed in passing, while touching SD logging for the debug
  * session folder: sd_append_line() (and therefore sd_log_json()/
@@ -401,13 +400,34 @@ static bool sd_create_debug_session(char *session_dir_out, size_t session_dir_ou
         return false;
     }
 
-    static uint8_t s_debug_session_counter = 0;
-    s_debug_session_counter++;
-    char dir[DEBUG_SD_SESSION_DIR_MAX];
-    snprintf(dir, sizeof(dir), SD_LOG_DIR "/dbg%u", (unsigned)s_debug_session_counter);
-
     xSemaphoreTake(s_sd_mutex, portMAX_DELAY);
-    bool dir_ok = SD.exists(dir) || SD.mkdir(dir);
+
+    /* Find the first unused dbgN by probing SD.exists() upward from 1,
+     * rather than tracking a counter that starts at 0 on every boot.
+     * A boot-local counter would collide with folders left over from a
+     * PREVIOUS boot: reboot after already creating dbg1/dbg2, then send
+     * the command again, and a plain incrementing counter would produce
+     * "dbg1" again -- SD.exists() sees it's already there, treats that
+     * as fine, and the new session's data gets silently appended into
+     * the OLD session's files instead of getting its own clean, isolated
+     * folder, which is the entire point of this command. Probing SD
+     * state directly makes uniqueness a property of what's actually on
+     * the card, not of in-RAM state that resets every boot. */
+    char dir[DEBUG_SD_SESSION_DIR_MAX];
+    uint16_t n;
+    for (n = 1; n <= 9999; n++) {
+        snprintf(dir, sizeof(dir), SD_LOG_DIR "/dbg%u", (unsigned)n);
+        if (!SD.exists(dir)) {
+            break;
+        }
+    }
+    if (n > 9999) {
+        Serial.println("[sd FAIL] ran out of debug session numbers (9999 already used)");
+        xSemaphoreGive(s_sd_mutex);
+        return false;
+    }
+
+    bool dir_ok = SD.mkdir(dir);
     if (!dir_ok) {
         Serial.print("[sd FAIL] could not create debug session dir ");
         Serial.println(dir);
@@ -1038,37 +1058,27 @@ static char s_debug_topic[64]; /* lrv/{FLEET}/{LRV_ID}/debug -- device publishes
 static char s_cmd_topic[64];   /* lrv/{FLEET}/{LRV_ID}/cmd   -- device subscribes, phone/backend publishes */
 
 /*
- * Subscribes to s_cmd_topic. UNVERIFIED against real hardware -- see this
- * file's header comment. Follows the same topic-then-payload two-step
- * shape as AT+CMQTTTOPIC/AT+CMQTTPAYLOAD (proven in mqtt_publish()):
- * AT+CMQTTSUBTOPIC=<client_index>,<topic_len>,<qos> gets a '>' prompt,
- * then the raw topic bytes; AT+CMQTTSUB=<client_index> actually
- * subscribes. QoS 1 so the broker retries delivery of a command sent
- * while briefly disconnected -- matching CLAUDE.md's remote-correction
- * design note, which this reuses the same subscribe path for later. */
+ * Subscribes to s_cmd_topic. Confirmed working end-to-end on real
+ * hardware (SIM7670G-MNGV V1.9.05): AT+CMQTTSUB=<client_index>,
+ * <topic_len>,<qos>,<dup> is ONE data-entry command (client_index,
+ * topic length, QoS, dup-flag), same '>' prompt convention
+ * AT+CMQTTTOPIC/AT+CMQTTPAYLOAD use for publish (proven in
+ * mqtt_publish()) -- there is no separate AT+CMQTTSUBTOPIC command on
+ * this firmware; an earlier version of this function assumed a
+ * publish-style two-step split and was wrong (confirmed via the
+ * command's own "=?" test form, which returned ERROR). dup=0 (a fresh
+ * subscribe, not a retransmit). QoS 1 so the broker retries delivery of
+ * a command sent while briefly disconnected -- matching CLAUDE.md's
+ * remote-correction design note, which this reuses the same subscribe
+ * path for later. The async "+CMQTTSUB: <client_index>,<result>" result
+ * line after the write's OK (mirroring CMQTTCONNECT's pattern) is also
+ * now confirmed to actually arrive on real hardware. */
 static bool mqtt_subscribe(const char *topic)
 {
     xSemaphoreTake(s_at_mutex, portMAX_DELAY);
     String resp;
     char cmd[64];
 
-    /* Real hardware (SIM7670G-MNGV V1.9.05), confirmed via
-     * debug_query_at_syntax(): AT+CMQTTSUBTOPIC does not exist on this
-     * firmware (ERROR to its own "=?" query) -- the original two-step
-     * publish-style TOPIC-then-SUB split this function used was simply
-     * wrong. AT+CMQTTSUB=? answered "+CMQTTSUB: (0-1),(1-1024),(0-2),
-     * (0-1)" -- <client_index>,<topic_len>,<qos>,<dup>, ONE data-entry
-     * command with the same '>' prompt convention CMQTTTOPIC/CMQTTPAYLOAD
-     * already use (proven in mqtt_publish()), just not split across two
-     * commands the way publish is. dup=0 (this is a fresh subscribe, not
-     * a retransmit). Still UNVERIFIED past the command's own parameter
-     * shape: whether a separate async "+CMQTTSUB: <client_index>,
-     * <result>" result line follows the write's OK (mirrored here from
-     * CMQTTCONNECT's proven pattern, not itself confirmed) -- if the next
-     * real-hardware capture shows "no +CMQTTSUB result line" where the
-     * write's OK otherwise looked fine, that's the next thing to fix
-     * (most likely: this firmware doesn't emit a separate result URC for
-     * SUB, so the write's own OK should be treated as success instead). */
     snprintf(cmd, sizeof(cmd), "AT+CMQTTSUB=%d,%u,1,0", MQTT_CLIENT_INDEX, (unsigned)strlen(topic));
     if (!send_at_command_expect(cmd, resp, ">", 10000)) {
         Serial.println("[mqtt FAIL] AT+CMQTTSUB got no '>' prompt");
@@ -1108,37 +1118,10 @@ static bool mqtt_subscribe(const char *topic)
     return ok;
 }
 
-/* Real hardware (SIM7670G-MNGV V1.9.05) has now returned a fast ERROR to
- * AT+CMQTTSUBTOPIC with plausible parameters -- meaning either the
- * modem doesn't have that command at all, or it exists but wants
- * different arguments; a bare ERROR doesn't distinguish the two. Rather
- * than guess a third syntax blind, ask the modem itself: most SIMCOM AT
- * commands support a `=?` test form that echoes back the parameter list
- * they actually expect. Sends "<base_cmd>=?" and prints whatever comes
- * back -- this is exactly the ground truth needed to fix
- * mqtt_subscribe() for real, once captured from an actual boot. */
-static void debug_query_at_syntax(const char *base_cmd)
-{
-    xSemaphoreTake(s_at_mutex, portMAX_DELAY);
-    String resp;
-    char cmd[48];
-    snprintf(cmd, sizeof(cmd), "%s=?", base_cmd);
-    send_at_command(cmd, resp, 5000); /* result ignored -- printing resp either way is the point */
-    xSemaphoreGive(s_at_mutex);
-
-    Serial.print("[mqtt DEBUG] ");
-    Serial.print(cmd);
-    Serial.print(" -> [");
-    Serial.print(resp);
-    Serial.println("]");
-}
-
 /*
  * Non-blocking-ish peek for an unsolicited incoming-publish URC on
- * s_cmd_topic. UNVERIFIED against real hardware -- see this file's
- * header comment. Assumed shape (consistent with how other SIMCOM
- * A76xx-family onboard-MQTT-client URCs are structured, but the exact
- * field layout for THIS firmware has not been confirmed):
+ * s_cmd_topic. CONFIRMED on real hardware (SIM7670G-MNGV V1.9.05): the
+ * shape below is exactly what this firmware sends:
  *
  *   +CMQTTRXSTART: <client_index>,<topic_len>,<payload_len>
  *   +CMQTTRXTOPIC: <client_index>,<topic_len>
@@ -1163,15 +1146,16 @@ static bool mqtt_check_incoming(char *payload_out, size_t payload_out_len, unsig
         s_incoming_buf += (char)SerialAT.read();
     }
     if (s_incoming_buf.indexOf("+CMQTTRXSTART:") < 0) {
-        /* Diagnostic-only, temporary: the +CMQTTRXSTART: assumption
-         * itself is unverified (see this file's header comment), and by
-         * design this whole branch is otherwise SILENT so a normal 1 Hz
-         * poll with nothing pending doesn't spam the log -- which means
-         * if the assumption is wrong, this would previously give zero
-         * visibility into what the modem actually sent when a subscribed
-         * message arrived. Print it once, only when new bytes actually
-         * showed up this poll (not on every empty poll). Remove once
-         * mqtt_check_incoming()'s real URC format is confirmed. */
+        /* By design this whole branch is otherwise SILENT so a normal
+         * 1 Hz poll with nothing pending doesn't spam the log. Kept as a
+         * standing safety net, not just a one-time discovery tool: if
+         * unexpected bytes ever do show up here (a modem firmware
+         * update changing the URC shape, a genuinely malformed message,
+         * etc), this is the only place that would ever surface it --
+         * silently discarding them again (as the pre-DEBUG_MODE_ENABLED
+         * code always did) would just reintroduce the original blind
+         * spot. Printed once, only when new bytes actually showed up
+         * this poll (not on every empty poll). */
         if (s_incoming_buf.length() != before_len) {
             Serial.print("[mqtt DEBUG] unexpected incoming bytes (no +CMQTTRXSTART: match): [");
             Serial.print(s_incoming_buf);
@@ -1899,16 +1883,6 @@ void setup()
                 }
 #if DEBUG_MODE_ENABLED
                 if (s_mqtt_ready) {
-                    /* Diagnostic-only, temporary: real hardware has
-                     * rejected AT+CMQTTSUBTOPIC with a fast ERROR
-                     * (unverified syntax, guessed twice, both wrong so
-                     * far) -- ask the modem for its own expected syntax
-                     * before trying again, rather than guess a third
-                     * time. Remove once mqtt_subscribe() is confirmed
-                     * working against real hardware. */
-                    debug_query_at_syntax("AT+CMQTTSUBTOPIC");
-                    debug_query_at_syntax("AT+CMQTTSUB");
-
                     Serial.print("[cmd] subscribing to ");
                     Serial.println(s_cmd_topic);
                     if (!mqtt_subscribe(s_cmd_topic)) {
