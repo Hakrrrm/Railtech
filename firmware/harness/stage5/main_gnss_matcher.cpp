@@ -1691,15 +1691,23 @@ static void gnss_matcher_task(void *arg)
  * dispatch table is future work once more commands exist (see
  * CLAUDE.md's remote mileage-correction design note, which this shares
  * s_cmd_topic's subscribe plumbing with). Deliberately a loose substring
- * check ("cmd":"debug_start_session") rather than a real JSON parse --
- * no JSON parser is linked into this harness, and the payload shape is
- * simple/fixed enough that a substring match is fine for a debug-only
- * command channel; revisit if s_cmd_topic ever carries anything with
- * more structure (e.g. the mileage-correction command, which does need
- * a real field like target_km parsed out). */
+ * check on just the command name (debug_start_session) rather than a
+ * real JSON parse -- no JSON parser is linked into this harness, and the
+ * payload shape is simple/fixed enough that a substring match is fine
+ * for a debug-only command channel. Checking only the bare command name,
+ * not the surrounding "cmd":"..." JSON punctuation, is also deliberate:
+ * real hardware testing hit a real client sending curly/smart quotes
+ * ("cmd":"debug_start_session" instead of "cmd":"debug_start_session",
+ * a common phone-keyboard/app autocorrect) which a punctuation-sensitive
+ * check would reject outright -- the command name itself has no quotes
+ * in it, so matching on that alone is naturally immune to whatever
+ * quote style the payload happens to use. Revisit if s_cmd_topic ever
+ * carries anything with more structure (e.g. the mileage-correction
+ * command, which does need a real field like target_km parsed out and
+ * so can't get away with this same looseness). */
 static void handle_incoming_cmd(const char *payload)
 {
-    if (strstr(payload, "\"cmd\":\"debug_start_session\"") == NULL) {
+    if (strstr(payload, "debug_start_session") == NULL) {
         Serial.print("[cmd] unrecognised payload, ignoring: ");
         Serial.println(payload);
         return;
