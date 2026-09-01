@@ -274,19 +274,43 @@ int map_matcher_update(map_matcher_state_t *st,
      * segment is reported normally, not inferred. */
     int16_t bridged[MAP_MATCHER_MAX_BRIDGE_SEGMENTS];
     int n_bridged = 0;
-    if (reacquiring && dir == 'E') {
-        int n = find_forward_path(num_segments, next_fwd, next_fwd_count,
-                                   st->cur_seg_idx, best_idx,
-                                   bridged, MAP_MATCHER_MAX_BRIDGE_SEGMENTS);
-        if (n > 0) {
-            n_bridged = n;
-        } else if (n < 0) {
-            /* Reappeared somewhere with no short forward path from where
-             * the signal was lost. What happened in between cannot be
-             * justified from the map, so credit nothing: re-bootstrap
-             * silently. Under-counting an unobserved stretch is
-             * recoverable at anchor reconciliation; inventing kilometres
-             * of mileage is not. */
+    if (reacquiring) {
+        if (dir == 'E') {
+            int n = find_forward_path(num_segments, next_fwd, next_fwd_count,
+                                       st->cur_seg_idx, best_idx,
+                                       bridged, MAP_MATCHER_MAX_BRIDGE_SEGMENTS);
+            if (n > 0) {
+                n_bridged = n;
+            } else if (n < 0) {
+                /* Reappeared somewhere with no short forward path from
+                 * where the signal was lost. What happened in between
+                 * cannot be justified from the map, so credit nothing:
+                 * re-bootstrap silently. Under-counting an unobserved
+                 * stretch is recoverable at anchor reconciliation;
+                 * inventing kilometres of mileage is not. */
+                st->cur_seg_idx = best_idx;
+                st->seg_enter_time_s = now_s;
+                st->pending_n = 0;
+                st->pending_head = 0;
+                return 0;
+            }
+        } else if (!old_seg->bidir) {
+            /* dir == 'W' reached only via the global re-acquisition
+             * search (map_matcher_update's bootstrap/reacquiring branch
+             * above, which ignores loop_id entirely) -- the normal
+             * steady-state candidate set never offers a reverse neighbour
+             * unless old_seg->bidir is true (see the candidate-generation
+             * block above), so a one-way segment can never be
+             * legitimately left "backwards". Confirmed on real hardware:
+             * two physically close, same-named-station loops (e.g. an
+             * inner/outer pair) can put a noisy fix ~40-50 m off-track
+             * during re-acquisition marginally closer to the WRONG loop's
+             * segment than the right one, satisfying this dir=='W'
+             * string match purely by coincidence of node naming, not by
+             * any real reverse traversal -- crediting that here fired a
+             * segment completion in seconds where the real traversal
+             * takes minutes. Same rule as the n<0 case above: credit
+             * nothing, re-bootstrap silently. */
             st->cur_seg_idx = best_idx;
             st->seg_enter_time_s = now_s;
             st->pending_n = 0;

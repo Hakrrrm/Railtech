@@ -1494,6 +1494,21 @@ static void gnss_matcher_task(void *arg)
     map_matcher_state_t matcher_st;
     map_matcher_init(&matcher_st);
 
+    /* Last real (non-fallback) GNSS epoch seen, and the device uptime at
+     * which it was captured -- lets a momentary blank-date GNSS parse
+     * (fix.utc_epoch_s == 0; a real, recurring receiver quirk, not an
+     * error) fall back to a carried-forward wall-clock estimate instead
+     * of raw millis()/1000 uptime. Confirmed on real hardware: an event
+     * published during exactly one of these blank-date fixes previously
+     * got millis()/1000 (a small uptime-seconds value, e.g. 669) as its
+     * "t", which a downstream consumer naively treating "t" as a Unix
+     * epoch renders as 1970-01-01 -- see CLAUDE.md/README for the
+     * Sengkang test run this was caught on. Advancing the last known-good
+     * epoch by elapsed uptime keeps "t" a plausible wall-clock value
+     * through the glitch instead of jumping to an uptime counter. */
+    uint32_t last_good_epoch_s = 0;
+    uint32_t last_good_epoch_millis = 0;
+
 #if DEBUG_MODE_ENABLED
     /* Ongoing field-debug status heartbeat -- GPS fix state + SD status,
      * every DEBUG_STATUS_INTERVAL_MS, so a test can be monitored entirely
@@ -1633,7 +1648,20 @@ static void gnss_matcher_task(void *arg)
         /* Log/print every valid fix -- independent of whether it moves the
          * matcher -- so GNSS acquisition health is visible/verifiable on
          * its own, before trusting the matcher's SEG_DONE output. */
-        uint32_t now_s = (fix.utc_epoch_s != 0) ? fix.utc_epoch_s : (uint32_t)(millis() / 1000);
+        if (fix.utc_epoch_s != 0) {
+            last_good_epoch_s = fix.utc_epoch_s;
+            last_good_epoch_millis = (uint32_t)millis();
+        }
+        /* now_s: a real epoch when synced; otherwise the last real epoch
+         * advanced by however much uptime has passed since it was
+         * captured (see last_good_epoch_s's comment above); only before
+         * the very first time sync of this boot (last_good_epoch_s still
+         * 0) is there truly nothing to carry forward, so millis()/1000 is
+         * the last resort there. */
+        uint32_t now_s = (fix.utc_epoch_s != 0) ? fix.utc_epoch_s
+                        : (last_good_epoch_s != 0)
+                            ? last_good_epoch_s + ((uint32_t)millis() - last_good_epoch_millis) / 1000
+                            : (uint32_t)(millis() / 1000);
 
         /* map_matcher_update()'s own contract (map_matcher.h) requires a
          * MONOTONIC clock -- its dwell-time math is a plain subtraction,
@@ -1757,7 +1785,10 @@ static void gnss_matcher_task(void *arg)
             msg.hdop_x10 = fix.hdop_x10;
             msg.nsv = fix.nsv;
             msg.t = now_s;
-            msg.t_is_wall_clock = (fix.utc_epoch_s != 0);
+            /* now_s is a usable epoch (real or carried-forward) as soon
+             * as any sync has ever happened this boot -- see now_s's own
+             * comment above. Only truly false before the first sync. */
+            msg.t_is_wall_clock = (last_good_epoch_s != 0);
 
             if (xQueueSend(s_matcher_queue, &msg, 0) != pdTRUE) {
                 Serial.println("[matcher] queue full, dropping SEG_DONE");
