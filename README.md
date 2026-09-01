@@ -113,14 +113,19 @@ you named your input files.
 
 ## Supabase / ingest bridge setup (DETAILS)
 
-1. Supabase Password: kZoJXfkKlq87mGea
-2. Workflow: Whenever you open the Codespace and want to turn the listener on, you only need to type these two lines:
-   \
-   `cd ingest`
-   \
-   `npm start`
-   \
-   *The .env file and the Supabase keys pasted inside are already safely stored.
+Workflow: whenever you open the Codespace and want to turn the listener on,
+you only need to type these two lines:
+
+```
+cd ingest
+npm start
+```
+
+Credentials belong only in `ingest/.env` (gitignored, per `.env.example`) --
+never in this file or any other committed source. A real Supabase password
+was previously committed here in plaintext; it has been removed and must be
+treated as compromised -- rotate it in the Supabase dashboard if that has
+not already been done.
 
 ## Build stages
 
