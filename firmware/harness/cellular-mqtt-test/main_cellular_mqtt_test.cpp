@@ -43,6 +43,7 @@
 #include <string.h>
 
 #include <Arduino.h>
+#include <esp_system.h> /* esp_random() -- hardware TRNG, used to jitter the fake SEG_DONE fixtures below */
 
 #include "../../config.h"
 #include "../../pins_board.h"
@@ -434,7 +435,36 @@ static bool mqtt_connected()
 
 /* ---- setup/loop ------------------------------------------------------ */
 
+/* Arbitrary, deliberately varied SEG_DONE fixtures for exercising an
+ * ingest pipeline against something more than one repeated static row --
+ * both directions, a spread of realistic-looking distances, and a couple
+ * of intentionally different-looking seg_ids (mixed length, one with a
+ * loop-style suffix) so a consumer that's quietly assuming fixed-width
+ * fields or one specific seg_id gets caught here rather than in the
+ * field. seg_id has no FK/lookup requirement in supabase/schema.sql --
+ * segment_traversals only foreign-keys lrv_id, so any string is valid
+ * here regardless of what track dataset (if any) is actually loaded. */
+struct FakeSegment {
+    const char *seg_id;
+    char        dir;
+    int32_t     d_mm;
+    float       hdop_base;
+    int         nsv_base;
+    int         dwell_base;
+};
+
+static const FakeSegment FAKE_SEGMENTS[] = {
+    { "PE3_PE4_E",              'E', 612400, 0.8f, 18, 40 },
+    { "PE4_PE5_E",              'E', 845100, 1.0f, 15, 55 },
+    { "PE5_PE4_W",              'W', 845100, 1.2f, 12, 50 },
+    { "Depot_Siding_A",         'E', 118300, 1.6f,  9, 20 },
+    { "PE4_PE3_W",              'W', 612400, 0.9f, 20, 42 },
+    { "PE3_Sengkang_Loop_E",    'E', 993200, 2.1f,  7, 70 },
+};
+#define FAKE_SEGMENT_COUNT (sizeof(FAKE_SEGMENTS) / sizeof(FAKE_SEGMENTS[0]))
+
 static uint32_t s_msg_count = 0;
+static int64_t s_odo_mm = 128473900; /* arbitrary starting odometer, matches the old 128473.9 km baseline */
 static char s_topic[64];
 static unsigned long s_last_publish_ms = 0;
 static unsigned long s_last_check_ms = 0;
@@ -611,25 +641,37 @@ void loop()
          * ignoreDuplicates, so a static seq would insert once and then
          * silently no-op on every later publish. t has no real GNSS/RTC
          * time source in this harness, so it's a synthetic Unix-epoch-
-         * shaped placeholder, not a real fix time. seg/dir/d_m/hdop/nsv
-         * are fixed plausible values; odo_km increments by d_m each
-         * publish, as a real odometer would across repeated segment
-         * completions. */
+         * shaped placeholder, not a real fix time.
+         *
+         * seg/dir/d_m cycle through FAKE_SEGMENTS below rather than one
+         * fixed value, and hdop/nsv/dwell_s get light jitter -- this is
+         * an ingest-pipeline load generator, not a bring-up smoke test
+         * anymore, so it deliberately exercises variety the bridge and
+         * schema need to handle correctly (both directions, a spread of
+         * distances/qualities, a seg_id changing every publish) rather
+         * than proving the exact same row upserts idempotently forever.
+         * odo_km accumulates each segment's own d_m exactly, in
+         * millimetres, the same discipline handle_seg_done() uses on
+         * the real firmware (fixed per-publish rounding error would
+         * otherwise compound linearly over a long test run). */
         uint32_t seq = s_msg_count + 1;
         uint32_t t = 1785560670UL + (now / 1000);
-        const float d_m = 612.4f;
-        const float hdop = 1.4f;
-        const int nsv = 19;
-        const int dwell_s = 5;
-        float odo_km = 128473.9f + (float)s_msg_count * (d_m / 1000.0f);
+
+        const FakeSegment &seg = FAKE_SEGMENTS[s_msg_count % FAKE_SEGMENT_COUNT];
+        s_odo_mm += seg.d_mm;
+        float d_m = seg.d_mm / 1000.0f;
+        float odo_km = s_odo_mm / 1000000.0f;
+        float hdop = seg.hdop_base + (float)(esp_random() % 8) / 10.0f; /* +0.0..0.7 jitter */
+        int nsv = seg.nsv_base + (int)(esp_random() % 5);               /* +0..4 jitter */
+        int dwell_s = seg.dwell_base + (int)(esp_random() % 20);        /* +0..19s jitter */
 
         char payload[256];
         snprintf(payload, sizeof(payload),
                  "{\"v\":1,\"lrv\":\"%s\",\"seq\":%lu,\"t\":%lu,\"ev\":\"SEG_DONE\","
-                 "\"seg\":\"PE3_PE4_E\",\"dir\":\"E\",\"d_m\":%.1f,\"odo_km\":%.1f,"
+                 "\"seg\":\"%s\",\"dir\":\"%c\",\"d_m\":%.1f,\"odo_km\":%.1f,"
                  "\"hdop\":%.1f,\"nsv\":%d,\"dwell_s\":%d}",
-                 MQTT_LRV_ID, (unsigned long)seq, (unsigned long)t, d_m, odo_km,
-                 hdop, nsv, dwell_s);
+                 MQTT_LRV_ID, (unsigned long)seq, (unsigned long)t,
+                 seg.seg_id, seg.dir, d_m, odo_km, hdop, nsv, dwell_s);
         if (mqtt_publish(s_topic, payload)) {
             Serial.print("[mqtt] published: ");
             Serial.println(payload);
