@@ -53,12 +53,22 @@ Whenever `track.geojson` or `loop_lengths.csv` changes, regenerate
 `segments.csv` and `track_data.h` -- a stale header is the silent failure
 mode the build plan calls out (Sec 10):
 
-```
+**bash / WSL / git-bash / Linux / macOS:**
+```bash
 python3 tools/track_pipeline.py \
     --geojson track.geojson \
     --loop-lengths loop_lengths.csv \
     --out-dir firmware/src/ \
     [--loop-name NAME]   # required only for Option B (raw/unsegmented trace) input
+```
+
+**Windows PowerShell** (native, not WSL -- backtick line continuation, `python` instead of `python3`):
+```powershell
+python tools/track_pipeline.py `
+    --geojson track.geojson `
+    --loop-lengths loop_lengths.csv `
+    --out-dir firmware/src/
+    # add --loop-name NAME only for Option B (raw/unsegmented trace) input
 ```
 
 The pipeline fails loudly (non-zero exit, specific `ERROR:` message naming
@@ -77,10 +87,19 @@ usual spot) -- `--geojson`/`--loop-lengths` take any path, so your own
 filenames (e.g. `Track_sections.geojson`, `Loop_length.csv`) work as-is,
 no renaming required. Just point the two flags at whatever you uploaded:
 
-```
+**bash / WSL / git-bash / Linux / macOS:**
+```bash
 python3 tools/track_pipeline.py \
     --geojson Track_sections.geojson \
     --loop-lengths Loop_length.csv \
+    --out-dir firmware/src/
+```
+
+**Windows PowerShell:**
+```powershell
+python tools/track_pipeline.py `
+    --geojson Track_sections.geojson `
+    --loop-lengths Loop_length.csv `
     --out-dir firmware/src/
 ```
 
