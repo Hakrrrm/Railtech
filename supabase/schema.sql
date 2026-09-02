@@ -64,3 +64,10 @@ create table cycle_state (
 -- RLS/grants, so this only constrains the anon/authenticated roles used by
 -- client-facing apps -- exactly the roles that must never edit history.
 revoke update, delete on mileage_anchors from anon, authenticated;
+
+-- Enables Supabase Realtime (a WebSocket push on INSERT/UPDATE/DELETE)
+-- for the two tables frontend/src/App.jsx subscribes to for live
+-- dashboard refresh. Without this, INSERTs land in the table fine, but
+-- an already-open dashboard has no way to find out short of a manual
+-- reload -- the subscription in App.jsx silently receives nothing.
+alter publication supabase_realtime add table segment_traversals, mileage_anchors;

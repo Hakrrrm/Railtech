@@ -73,6 +73,38 @@ function App() {
     fetchData()
   }, [lrvId])
 
+  // Live refresh: without this, fetchData() only ever runs on mount, on
+  // switching lrvId, and after THIS browser's own manual-entry submit --
+  // a row inserted by anything else (the ingest bridge writing a real
+  // SEG_DONE, or a technician submitting from a different browser/phone)
+  // never reaches an already-open dashboard until it's manually reloaded
+  // or the vehicle dropdown is toggled. Supabase Realtime pushes a
+  // notification over the same WebSocket the client already holds open
+  // the moment a row is inserted, so re-running fetchData() here is
+  // enough to pick it up live. Requires Realtime replication to be
+  // enabled for these two tables in the Supabase project (Database ->
+  // Replication in the dashboard, or `alter publication
+  // supabase_realtime add table segment_traversals, mileage_anchors;`
+  // in the SQL editor) -- this subscription silently receives nothing
+  // if that hasn't been turned on.
+  useEffect(() => {
+    const channel = supabase
+      .channel(`lrv-${lrvId}-live`)
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'segment_traversals', filter: `lrv_id=eq.${lrvId}` },
+        () => fetchData()
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'mileage_anchors', filter: `lrv_id=eq.${lrvId}` },
+        () => fetchData()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [lrvId])
+
   const handleReadingChange = (e) => {
     const val = parseFloat(e.target.value)
     setManualReading(e.target.value)
