@@ -15,11 +15,22 @@ function App() {
   const [message, setMessage] = useState('')
 
   async function fetchData() {
+    // Ordered by id (the table's own auto-incrementing primary key --
+    // insertion order into Supabase), not by the device-reported seq.
+    // seq is normally monotonic per device (seq_store persists it across
+    // reboots), but a test/load-generator harness with its own counter
+    // can restart lower than what's already recorded, and ordering by
+    // seq would then silently hide its rows from "most recent" instead
+    // of just mis-ordering them. id has no such dependency on anything
+    // a device reports -- Postgres assigns it, so it's always accurate
+    // for "most recently written," independent of device state. Revisit
+    // if/when SD backfill-after-outage ships: a backfilled old event
+    // would get a new high id despite being chronologically old.
     const { data: traversals } = await supabase
       .from('segment_traversals')
-      .select('ts, seg_id, dir, odo_km, hdop')
+      .select('id, ts, seg_id, dir, odo_km, hdop')
       .eq('lrv_id', lrvId)
-      .order('seq', { ascending: false })
+      .order('id', { ascending: false })
       .limit(5)
       
     if (traversals && traversals.length > 0) {
