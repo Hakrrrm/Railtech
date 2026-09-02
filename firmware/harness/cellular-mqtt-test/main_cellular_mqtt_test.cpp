@@ -44,6 +44,8 @@
 
 #include <Arduino.h>
 #include <esp_system.h> /* esp_random() -- hardware TRNG, used to jitter the fake SEG_DONE fixtures below */
+#include <Preferences.h> /* seq/odo persistence -- see s_prefs's own comment for why this uses its
+                           * own namespace rather than firmware/src/seq_store.c's "odo" one */
 
 #include "../../config.h"
 #include "../../pins_board.h"
@@ -463,11 +465,55 @@ static const FakeSegment FAKE_SEGMENTS[] = {
 };
 #define FAKE_SEGMENT_COUNT (sizeof(FAKE_SEGMENTS) / sizeof(FAKE_SEGMENTS[0]))
 
-static uint32_t s_msg_count = 0;
-static int64_t s_odo_mm = 128473900; /* arbitrary starting odometer, matches the old 128473.9 km baseline */
+/* Persisted separately from firmware/src/seq_store.c's real "odo" NVS
+ * namespace, deliberately -- if this harness and stage5-gnss-matcher
+ * (or any future real firmware) are ever flashed onto the SAME physical
+ * board at different times, sharing seq_store's fixed "odo"/"seq"/
+ * "odo_mm" keys would let this generator's fake traffic silently
+ * continue (or corrupt) that board's REAL odometer state across a
+ * reflash. A separate namespace makes that impossible by construction:
+ * this harness's persisted counter and a real device's odometer can
+ * never collide, no matter what gets flashed onto the same board later.
+ *
+ * Also deliberately NOT calling seq_store_* directly for a second
+ * reason: seq_store.h's own contract says "commit on segment completion
+ * only, never timer-based" -- this harness commits every
+ * PUBLISH_INTERVAL_MS unconditionally, which is timer-based by
+ * construction (each commit is still tied 1:1 to one synthetic publish,
+ * matching the commit-before-publish spirit, but the trigger itself is
+ * a timer, not a real event) -- reusing that module here would
+ * contradict its own documented policy rather than extend it. */
+static Preferences s_prefs;
+#define PREFS_NAMESPACE "cell_test"
+#define PREFS_KEY_SEQ   "seq"
+#define PREFS_KEY_ODO   "odo_mm"
+#define PREFS_STARTING_ODO_MM 128473900LL /* arbitrary starting odometer, matches the old 128473.9 km baseline */
+
+static uint32_t s_msg_count = 0; /* mirrors the persisted seq -- see prefs_init() */
+static int64_t s_odo_mm = 0;     /* mirrors the persisted odo_mm -- see prefs_init() */
 static char s_topic[64];
 static unsigned long s_last_publish_ms = 0;
 static unsigned long s_last_check_ms = 0;
+
+/* Loads whatever this harness last committed (0/baseline on the very
+ * first boot after a fresh flash, since Preferences returns the default
+ * when a key has never been written) -- called once from setup(). NVS
+ * write endurance is finite; a 5s publish interval left running
+ * unattended for a very long stretch (many days) as a pure load
+ * generator is worth revisiting if that ever becomes the actual usage
+ * pattern, but is comfortably fine for normal test sessions. */
+static void prefs_init()
+{
+    s_prefs.begin(PREFS_NAMESPACE, /*readOnly=*/false);
+    s_msg_count = s_prefs.getUInt(PREFS_KEY_SEQ, 0);
+    s_odo_mm = s_prefs.getLong64(PREFS_KEY_ODO, PREFS_STARTING_ODO_MM);
+}
+
+static void prefs_commit()
+{
+    s_prefs.putUInt(PREFS_KEY_SEQ, s_msg_count);
+    s_prefs.putLong64(PREFS_KEY_ODO, s_odo_mm);
+}
 
 void setup()
 {
@@ -479,6 +525,10 @@ void setup()
     delay(100);
 
     Serial.println("[boot] cellular MQTT bring-up test");
+
+    prefs_init();
+    Serial.printf("[prefs] resuming from seq=%lu, odo_mm=%lld (fresh flash starts at seq=0)\n",
+                   (unsigned long)s_msg_count, (long long)s_odo_mm);
 
     pinMode(BOARD_PWRKEY_PIN, OUTPUT);
     SerialAT.begin(MODEM_BAUDRATE, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
@@ -654,13 +704,19 @@ void loop()
          * millimetres, the same discipline handle_seg_done() uses on
          * the real firmware (fixed per-publish rounding error would
          * otherwise compound linearly over a long test run). */
+        /* seq/odo are computed as PENDING values here and only actually
+         * advanced (and persisted) on a confirmed successful publish
+         * below -- a failed attempt must retry the same seq/segment
+         * next tick, not skip ahead, the same commit-before-publish
+         * discipline the real firmware follows (just applied to a
+         * synthetic event here instead of a real one). */
         uint32_t seq = s_msg_count + 1;
         uint32_t t = 1785560670UL + (now / 1000);
 
         const FakeSegment &seg = FAKE_SEGMENTS[s_msg_count % FAKE_SEGMENT_COUNT];
-        s_odo_mm += seg.d_mm;
+        int64_t pending_odo_mm = s_odo_mm + seg.d_mm;
         float d_m = seg.d_mm / 1000.0f;
-        float odo_km = s_odo_mm / 1000000.0f;
+        float odo_km = pending_odo_mm / 1000000.0f;
         float hdop = seg.hdop_base + (float)(esp_random() % 8) / 10.0f; /* +0.0..0.7 jitter */
         int nsv = seg.nsv_base + (int)(esp_random() % 5);               /* +0..4 jitter */
         int dwell_s = seg.dwell_base + (int)(esp_random() % 20);        /* +0..19s jitter */
@@ -675,7 +731,9 @@ void loop()
         if (mqtt_publish(s_topic, payload)) {
             Serial.print("[mqtt] published: ");
             Serial.println(payload);
-            s_msg_count++;
+            s_msg_count = seq;
+            s_odo_mm = pending_odo_mm;
+            prefs_commit();
         } else {
             Serial.println("[mqtt] publish failed this tick, will retry next interval");
         }
