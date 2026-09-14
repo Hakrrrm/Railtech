@@ -1,0 +1,298 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f8fafc; }
+    a { color: #0284c7; text-decoration: none; }
+    a:hover { color: #0369a1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden;">
+
+  <!-- HEADER -->
+  <div style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 16px 40px; background: #ffffff; border-bottom: 1px solid #cbd5e1;">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <div style="width: 42px; height: 42px; border-radius: 6px; background: #0f172a; display: flex; align-items: center; justify-content: center; color: #ffffff; font-size: 13px; font-weight: 800; letter-spacing: 0.5px;">LTA</div>
+      <div style="width: 1px; height: 30px; background: #cbd5e1;"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px;">
+        <span style="font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 1.5px; text-transform: uppercase;">Light Rail Transit Division · SPLRT</span>
+        <span style="font-size: 19px; font-weight: 800; color: #0f172a; letter-spacing: -0.4px;">LRV Maintenance Terminal</span>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 24px;">
+      <div style="display: flex; gap: 6px;">
+        <div style="padding: 9px 16px; border-radius: 6px; background: #0284c7; color: #ffffff; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Fleet Overview</div>
+        <div style="padding: 9px 16px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Maintenance Planner</div>
+        <div style="padding: 9px 16px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Technician App</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 2px; align-items: flex-end;">
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">Mon 14 Sep 2026</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: 600;">Data current to 07:42</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div style="flex-grow: 1; display: flex; gap: 20px; padding: 20px 40px; min-height: 0;">
+
+    <!-- SIDEBAR -->
+    <div style="width: 286px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px;">
+
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px;">
+        <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Fleet Tracked</span>
+        <div style="display: flex; align-items: baseline; gap: 7px;">
+          <span class="mono" style="font-size: 32px; font-weight: 800; color: #0f172a; letter-spacing: -1px;">57</span>
+          <span style="font-size: 12px; color: #64748b; font-weight: 700;">LRVs</span>
+        </div>
+        <div style="display: flex; gap: 6px; margin-top: 2px;">
+          <span style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0f2fe; color: #0369a1;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #0284c7;"></span>1 live device</span>
+          <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #475569;">56 simulated</span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 14px;">
+        <div style="flex-grow: 1; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 5px;">
+          <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Due this week</span>
+          <span class="mono" style="font-size: 28px; font-weight: 800; color: #92400e; letter-spacing: -1px;">6</span>
+        </div>
+        <div style="flex-grow: 1; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 5px;">
+          <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Overdue</span>
+          <span class="mono" style="font-size: 28px; font-weight: 800; color: #991b1b; letter-spacing: -1px;">1</span>
+        </div>
+      </div>
+
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Workshop load</span>
+          <span class="mono" style="font-size: 13px; font-weight: 800; color: #0f172a;">6 / 8 slots</span>
+        </div>
+        <div style="display: flex; gap: 4px;">
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #0284c7;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #e2e8f0;"></div>
+          <div style="flex-grow: 1; height: 8px; border-radius: 2px; background: #e2e8f0;"></div>
+        </div>
+        <span style="font-size: 11px; color: #64748b; line-height: 1.45;">Week of 14 Sep. Capacity clear — no deferral needed.</span>
+      </div>
+
+      <!-- THE CONFIDENCE WIDGET -->
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+        <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Recall timing precision</span>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span style="font-size: 11px; color: #64748b; font-weight: 700;">Loop-count estimate</span>
+            <span class="mono" style="font-size: 12px; font-weight: 800; color: #475569;">± 90 km</span>
+          </div>
+          <div style="position: relative; height: 10px; background: #e2e8f0; border-radius: 2px;">
+            <div style="position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #94a3b8;"></div>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 6px;">
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span style="font-size: 11px; color: #0f172a; font-weight: 800;">Railtech, anchor-bounded</span>
+            <span class="mono" style="font-size: 12px; font-weight: 800; color: #0284c7;">± 6 km</span>
+          </div>
+          <div style="position: relative; height: 10px; background: #e2e8f0; border-radius: 2px;">
+            <div style="position: absolute; left: 46.7%; width: 6.6%; top: 0; bottom: 0; background: #0284c7; border-radius: 2px;"></div>
+            <div style="position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: #94a3b8;"></div>
+          </div>
+        </div>
+
+        <span style="font-size: 11px; color: #475569; line-height: 1.45;">15× narrower recall window on a 2,000 km cycle. Error re-anchors at every PM visit — it never accumulates.</span>
+      </div>
+
+    </div>
+
+    <!-- MAIN COLUMN -->
+    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 20px; min-width: 0;">
+
+      <!-- FLAGGED -->
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column;">
+        <div style="padding: 13px 18px; border-bottom: 1px solid #e2e8f0; background: #fef2f2; border-radius: 8px 8px 0 0; display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 9px;">
+            <span style="width: 8px; height: 8px; border-radius: 50%; background: #dc2626;"></span>
+            <span style="font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #991b1b;">Flagged for maintenance</span>
+          </div>
+          <span style="font-size: 11px; color: #64748b; font-weight: 700;">Sorted by projected due date</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column;">
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #f1f5f9;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D18</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">2K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #991b1b;">+60 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #991b1b; font-weight: 700;">Overdue 3 days</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #64748b;">In workshop since Sat — reading not yet anchored</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fee2e2; color: #991b1b;">Overdue</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #f1f5f9;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D23</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">40K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #0f172a;">48 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #0f172a; font-weight: 700;">Tue 15 Sep</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #64748b;">402 km/day · within tolerance band 36,000–46,000</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fef3c7; color: #92400e;">Due</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #f1f5f9;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D12</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">2K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #0f172a;">56 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #0f172a; font-weight: 700;">Tue 15 Sep</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #64748b;">398 km/day</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fef3c7; color: #92400e;">Due</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #f1f5f9; background: #f8fafc;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D07</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">2K + 13K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #0f172a;">180 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #0f172a; font-weight: 700;">Wed 16 Sep</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #0369a1; font-weight: 700;">Bundle: 13K falls 1 day later — one visit clears both</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fef3c7; color: #92400e;">Due</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px; border-bottom: 1px solid #f1f5f9;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D41</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">13K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #0f172a;">95 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #0f172a; font-weight: 700;">Wed 16 Sep</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #64748b;">148 km/day · peak-hour duty only</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fef3c7; color: #92400e;">Due</span>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 16px; padding: 11px 18px;">
+            <span class="mono" style="width: 52px; flex-shrink: 0; font-size: 15px; font-weight: 800; color: #0f172a;">D33</span>
+            <span style="width: 190px; flex-shrink: 0; font-size: 13px; font-weight: 700; color: #0f172a;">120K Inspection</span>
+            <span class="mono" style="width: 96px; flex-shrink: 0; font-size: 13px; font-weight: 800; color: #475569;">850 km</span>
+            <span style="width: 118px; flex-shrink: 0; font-size: 13px; color: #475569; font-weight: 700;">Thu 17 Sep</span>
+            <span style="flex-grow: 1; font-size: 12px; color: #64748b;">410 km/day</span>
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #475569;">Approaching</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- ROSTER -->
+      <div style="flex-grow: 1; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column; min-height: 0;">
+        <div style="padding: 13px 18px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; border-radius: 8px 8px 0 0; display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #0f172a;">Fleet roster</span>
+          <div style="display: flex; gap: 6px;">
+            <span style="padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #0f172a; color: #ffffff;">Soonest due</span>
+            <span style="padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #475569;">Cycle type</span>
+            <span style="padding: 4px 10px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #475569;">Status</span>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; background: #f1f5f9; border-bottom: 2px solid #cbd5e1; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #475569;">
+          <span>LRV</span>
+          <span>Status</span>
+          <span>Lifetime mileage</span>
+          <span>km / day</span>
+          <span>Next cycle</span>
+          <span>Projected due</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D18</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #fef3c7; color: #92400e;">Maintenance</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">212,480 km</span>
+          <span class="mono" style="color: #94a3b8;">—</span>
+          <span style="font-weight: 700; color: #0f172a;">2K</span>
+          <span style="color: #991b1b; font-weight: 800;">Overdue</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D23</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">186,300 km</span>
+          <span class="mono" style="color: #475569;">402</span>
+          <span style="font-weight: 700; color: #0f172a;">40K</span>
+          <span style="color: #0f172a; font-weight: 700;">Tue 15 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D12</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">97,640 km</span>
+          <span class="mono" style="color: #475569;">398</span>
+          <span style="font-weight: 700; color: #0f172a;">2K</span>
+          <span style="color: #0f172a; font-weight: 700;">Tue 15 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px; background: #f8fafc;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D07</span>
+          <span style="display: flex; gap: 5px; align-items: center;">
+            <span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span>
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: 4px; font-size: 9px; font-weight: 800; text-transform: uppercase; background: #e0f2fe; color: #0369a1;"><span style="width: 4px; height: 4px; border-radius: 50%; background: #0284c7;"></span>Live</span>
+          </span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">128,473.9 km</span>
+          <span class="mono" style="color: #475569;">375</span>
+          <span style="font-weight: 700; color: #0f172a;">2K + 13K</span>
+          <span style="color: #0f172a; font-weight: 700;">Wed 16 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D41</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">58,300 km</span>
+          <span class="mono" style="color: #475569;">148</span>
+          <span style="font-weight: 700; color: #0f172a;">13K</span>
+          <span style="color: #0f172a; font-weight: 700;">Wed 16 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D33</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">241,900 km</span>
+          <span class="mono" style="color: #475569;">410</span>
+          <span style="font-weight: 700; color: #0f172a;">120K</span>
+          <span style="color: #475569; font-weight: 700;">Thu 17 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D02</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #f1f5f9; color: #475569;">Stabled</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">15,900 km</span>
+          <span class="mono" style="color: #475569;">145</span>
+          <span style="font-weight: 700; color: #0f172a;">2K</span>
+          <span style="color: #475569; font-weight: 700;">Mon 21 Sep</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 72px 128px 1fr 112px 108px 128px; align-items: center; padding: 9px 18px; border-bottom: 1px solid #f1f5f9; font-size: 13px;">
+          <span class="mono" style="font-weight: 800; color: #0f172a;">D05</span>
+          <span><span style="padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #dcfce7; color: #166534;">Revenue</span></span>
+          <span class="mono" style="font-weight: 700; color: #0f172a;">340,760 km</span>
+          <span class="mono" style="color: #475569;">395</span>
+          <span style="font-weight: 700; color: #0f172a;">360K</span>
+          <span style="color: #475569; font-weight: 700;">Fri 9 Oct</span>
+        </div>
+
+        <div style="padding: 11px 18px; display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 12px; color: #64748b;">49 further vehicles — none due within 7 days</span>
+          <span style="font-size: 12px; color: #0284c7; font-weight: 700;">Show all 57</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

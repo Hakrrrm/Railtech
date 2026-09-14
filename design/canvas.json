@@ -1,0 +1,39 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Fleet Overview", "x": 0, "y": 0, "w": 1440, "h": 900 },
+    { "file": "VehicleDetail.dc.html", "title": "Single LRV", "x": 1560, "y": 0, "w": 1440, "h": 900 },
+    { "file": "MaintenancePlanner.dc.html", "title": "Maintenance Planner", "x": 0, "y": 1060, "w": 1440, "h": 900 },
+    { "file": "TechnicianApp.dc.html", "title": "Technician App", "x": 1560, "y": 1060, "w": 390, "h": 844 }
+  ],
+  "annotations": [
+    {
+      "id": "note-fleet",
+      "x": 0,
+      "y": -190,
+      "w": 700,
+      "text": "FLEET OVERVIEW — the Workshop Controller's morning view.\n\nCovers FR-40 (fleet table), FR-43 (sort by soonest due), FR-46 (status colour) and FR-21 (composite \"2K+13K\" labels, existing convention).\n\nThe sidebar's bottom card is the pitch: recall timing precision, +/-90 km today vs +/-6 km with Railtech. That number is from TDD Appendix A and is currently buried in the report."
+    },
+    {
+      "id": "note-vehicle",
+      "x": 1560,
+      "y": -190,
+      "w": 700,
+      "text": "SINGLE LRV — covers FR-41 (distance to each of the five thresholds) and FR-42 (projected due DATE, not km remaining).\n\nFive cycle tiles, each showing km-since / nominal and the date it crosses. Far-out cycles show month-level dates, which is honest about the precision.\n\nBottom-left chart is the \"bounded, not cumulative\" argument from TDD 6.1 — error resets at every anchor rather than drifting. It answers the main technical objection an operator panel will raise."
+    },
+    {
+      "id": "note-planner",
+      "x": 0,
+      "y": 2020,
+      "w": 700,
+      "text": "MAINTENANCE PLANNER — this page is the differentiator; nothing in the brief asks for it.\n\nAuto-ranked plan (overdue risk, then tolerance-band position, then bay availability), bundling (D07's 2K+13K in one visit), and a real capacity constraint.\n\nThe bottom-right card closes the loop nobody else will build: a projected capacity conflict two weeks out, resolved by changing DEPLOYMENT today rather than by deferring maintenance later. Needs a bay-capacity figure and per-cycle bay hours, neither of which exists in the schema yet."
+    },
+    {
+      "id": "note-tech",
+      "x": 1560,
+      "y": 1960,
+      "w": 560,
+      "text": "TECHNICIAN APP — same deployment, a route in the same app, phone-shaped.\n\nCovers FR-20/21/23/24/25/27 and targets NFR-06 (under 45 s from vehicle selection to commit) — hence three decisions on one screen, no wizard.\n\nThe OCR confidence chip and the plausibility check answer NFR-07: no silent wrong commits. The dark panel is a stand-in for the captured photo."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

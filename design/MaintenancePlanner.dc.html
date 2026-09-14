@@ -1,0 +1,263 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #f8fafc; }
+    a { color: #0284c7; text-decoration: none; }
+    a:hover { color: #0369a1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</helmet>
+
+<div style="width: 1440px; height: 900px; background: #f8fafc; display: flex; flex-direction: column; overflow: hidden;">
+
+  <!-- HEADER -->
+  <div style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; padding: 16px 40px; background: #ffffff; border-bottom: 1px solid #cbd5e1;">
+    <div style="display: flex; align-items: center; gap: 16px;">
+      <div style="width: 42px; height: 42px; border-radius: 6px; background: #0f172a; display: flex; align-items: center; justify-content: center; color: #ffffff; font-size: 13px; font-weight: 800; letter-spacing: 0.5px;">LTA</div>
+      <div style="width: 1px; height: 30px; background: #cbd5e1;"></div>
+      <div style="display: flex; flex-direction: column; gap: 3px;">
+        <span style="font-size: 10px; font-weight: 800; color: #64748b; letter-spacing: 1.5px; text-transform: uppercase;">Light Rail Transit Division · SPLRT</span>
+        <span style="font-size: 19px; font-weight: 800; color: #0f172a; letter-spacing: -0.4px;">LRV Maintenance Terminal</span>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 24px;">
+      <div style="display: flex; gap: 6px;">
+        <div style="padding: 9px 16px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Fleet Overview</div>
+        <div style="padding: 9px 16px; border-radius: 6px; background: #0284c7; color: #ffffff; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Maintenance Planner</div>
+        <div style="padding: 9px 16px; border-radius: 6px; background: #f1f5f9; color: #475569; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Technician App</div>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 2px; align-items: flex-end;">
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">Week of 14 Sep 2026</span>
+        <span style="font-size: 11px; color: #64748b; font-weight: 600;">Draft — not yet sent</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- BODY -->
+  <div style="flex-grow: 1; display: flex; gap: 20px; padding: 20px 40px; min-height: 0;">
+
+    <!-- PLAN -->
+    <div style="flex-grow: 1; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column; min-width: 0;">
+
+      <div style="padding: 14px 20px; border-bottom: 1px solid #e2e8f0; background: #f8fafc; border-radius: 8px 8px 0 0; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <span style="font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #0f172a;">Suggested plan</span>
+          <span style="font-size: 11px; color: #64748b; font-weight: 600;">Ranked by overdue risk, then tolerance-band position, then bay availability</span>
+        </div>
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 4px; font-size: 10px; font-weight: 800; text-transform: uppercase; background: #e0f2fe; color: #0369a1;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
+          Auto-generated
+        </span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 9px 20px; background: #f1f5f9; border-bottom: 2px solid #cbd5e1; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #475569;">
+        <span></span><span>LRV</span><span>Cycles</span><span>Why now</span><span>Bay time</span><span>Slot</span>
+      </div>
+
+      <!-- Row 1 -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D18</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">2K Inspection</span>
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <span style="padding: 2px 7px; border-radius: 3px; font-size: 9px; font-weight: 800; text-transform: uppercase; background: #fee2e2; color: #991b1b;">Overdue</span>
+          <span style="font-size: 12px; color: #475569;">60 km past the 2,450 km tolerance ceiling</span>
+        </span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">3.0 h</span>
+        <span style="font-size: 12px; font-weight: 800; color: #991b1b;">Today</span>
+      </div>
+
+      <!-- Row 2 -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D23</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">40K Inspection</span>
+        <span style="font-size: 12px; color: #475569;">48 km to threshold at 402 km/day — crosses tomorrow</span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">8.0 h</span>
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Tue 15</span>
+      </div>
+
+      <!-- Row 3 -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D12</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">2K Inspection</span>
+        <span style="font-size: 12px; color: #475569;">56 km to threshold at 398 km/day</span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">3.0 h</span>
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Tue 15</span>
+      </div>
+
+      <!-- Row 4 — the bundle -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9; background: #f0f9ff;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D07</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">2K + 13K Inspection</span>
+        <span style="display: flex; align-items: center; gap: 8px;">
+          <span style="padding: 2px 7px; border-radius: 3px; font-size: 9px; font-weight: 800; text-transform: uppercase; background: #e0f2fe; color: #0369a1;">Bundled</span>
+          <span style="font-size: 12px; color: #0369a1; font-weight: 600;">13K falls 1 day after 2K — one visit instead of two</span>
+        </span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">5.5 h</span>
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Wed 16</span>
+      </div>
+
+      <!-- Row 5 -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #f1f5f9;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D41</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">13K Inspection</span>
+        <span style="font-size: 12px; color: #475569;">95 km at 148 km/day — peak-hour duty, slower approach</span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">4.5 h</span>
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Wed 16</span>
+      </div>
+
+      <!-- Row 6 -->
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #e2e8f0;">
+        <span><span style="display: inline-flex; width: 16px; height: 16px; border-radius: 3px; background: #0284c7; align-items: center; justify-content: center;"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span></span>
+        <span class="mono" style="font-size: 15px; font-weight: 800; color: #0f172a;">D33</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">120K Inspection</span>
+        <span style="font-size: 12px; color: #475569;">850 km at 410 km/day — 2-day bay occupancy</span>
+        <span class="mono" style="font-size: 13px; font-weight: 700; color: #0f172a;">16.0 h</span>
+        <span style="font-size: 12px; font-weight: 700; color: #0f172a;">Thu 17–Fri 18</span>
+      </div>
+
+      <!-- Deferred -->
+      <div style="padding: 9px 20px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; gap: 9px;">
+        <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #64748b;">Not in this plan</span>
+        <span style="font-size: 11px; color: #94a3b8;">— next window, no capacity pressure</span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 10px 20px; border-bottom: 1px solid #f1f5f9; opacity: 0.6;">
+        <span><span style="display: inline-block; width: 16px; height: 16px; border-radius: 3px; border: 1.5px solid #cbd5e1; background: #ffffff;"></span></span>
+        <span class="mono" style="font-size: 14px; font-weight: 800; color: #0f172a;">D02</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">2K Inspection</span>
+        <span style="font-size: 12px; color: #475569;">Crosses Mon 21 Sep — outside this week</span>
+        <span class="mono" style="font-size: 13px; color: #94a3b8;">3.0 h</span>
+        <span style="font-size: 12px; color: #94a3b8;">Next week</span>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 34px 62px 150px 1fr 88px 104px; align-items: center; padding: 10px 20px; opacity: 0.6;">
+        <span><span style="display: inline-block; width: 16px; height: 16px; border-radius: 3px; border: 1.5px solid #cbd5e1; background: #ffffff;"></span></span>
+        <span class="mono" style="font-size: 14px; font-weight: 800; color: #0f172a;">D05</span>
+        <span style="font-size: 13px; font-weight: 700; color: #0f172a;">360K Overhaul</span>
+        <span style="font-size: 12px; color: #475569;">Crosses 9 Oct — schedule with works planning</span>
+        <span class="mono" style="font-size: 13px; color: #94a3b8;">—</span>
+        <span style="font-size: 12px; color: #94a3b8;">Oct</span>
+      </div>
+
+      <div style="flex-grow: 1;"></div>
+
+      <!-- FOOTER ACTIONS -->
+      <div style="padding: 16px 20px; border-top: 1px solid #e2e8f0; background: #f8fafc; border-radius: 0 0 8px 8px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; flex-direction: column; gap: 3px;">
+          <span style="font-size: 13px; font-weight: 800; color: #0f172a;">6 vehicles · 7 cycles · 40.0 bay-hours</span>
+          <span style="font-size: 11px; color: #64748b;">1 depot visit avoided by bundling D07</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <span style="padding: 11px 20px; border-radius: 6px; background: #ffffff; border: 1px solid #cbd5e1; color: #334155; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Edit plan</span>
+          <span style="display: inline-flex; align-items: center; gap: 8px; padding: 11px 22px; border-radius: 6px; background: #0284c7; color: #ffffff; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Send to technicians
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT RAIL -->
+    <div style="width: 376px; flex-shrink: 0; display: flex; flex-direction: column; gap: 14px;">
+
+      <!-- CAPACITY -->
+      <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); padding: 16px 18px; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: baseline;">
+          <span style="font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #64748b;">Bay capacity this week</span>
+          <span class="mono" style="font-size: 12px; font-weight: 800; color: #0f172a;">8 / 10 bay-days</span>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; align-items: end; height: 104px;">
+          <div style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; height: 100%;">
+            <div style="height: 50%; background: #0284c7; border-radius: 3px 3px 0 0;"></div>
+            <div style="height: 50%; background: #e2e8f0; border-radius: 0 0 3px 3px;"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; height: 100%;">
+            <div style="height: 100%; background: #0284c7; border-radius: 3px;"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; height: 100%;">
+            <div style="height: 100%; background: #0284c7; border-radius: 3px;"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; height: 100%;">
+            <div style="height: 50%; background: #0284c7; border-radius: 3px 3px 0 0;"></div>
+            <div style="height: 50%; background: #e2e8f0; border-radius: 0 0 3px 3px;"></div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; height: 100%;">
+            <div style="height: 50%; background: #0284c7; border-radius: 3px 3px 0 0;"></div>
+            <div style="height: 50%; background: #e2e8f0; border-radius: 0 0 3px 3px;"></div>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; font-size: 11px; font-weight: 700; color: #64748b; text-align: center;">
+          <span>Mon</span><span style="color: #0f172a;">Tue</span><span style="color: #0f172a;">Wed</span><span>Thu</span><span>Fri</span>
+        </div>
+
+        <span style="font-size: 11px; color: #475569; line-height: 1.45;">Tue and Wed are at full bay occupancy. Nothing further can be added without deferring.</span>
+      </div>
+
+      <!-- CLUSTERING -->
+      <div style="background: #ffffff; border: 1px solid #fca5a5; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column;">
+        <div style="padding: 12px 18px; background: #fef2f2; border-bottom: 1px solid #fecaca; border-radius: 8px 8px 0 0; display: flex; align-items: center; gap: 9px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#991b1b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #991b1b;">Capacity conflict ahead</span>
+        </div>
+        <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 9px;">
+          <span style="font-size: 13px; color: #0f172a; font-weight: 700; line-height: 1.45;">11 vehicles project to cross 13K between 28 Sep and 4 Oct.</span>
+          <span style="font-size: 12px; color: #475569; line-height: 1.5;">That fortnight has 10 bay-days available and this cluster needs 13 — <strong style="color: #991b1b;">3 vehicles would run past tolerance.</strong></span>
+        </div>
+      </div>
+
+      <!-- DEPLOYMENT RECOMMENDATION -->
+      <div style="flex-grow: 1; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); display: flex; flex-direction: column;">
+        <div style="padding: 12px 18px; background: #f0f9ff; border-bottom: 1px solid #bae6fd; border-radius: 8px 8px 0 0; display: flex; align-items: center; gap: 9px;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0369a1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><polyline points="19 9 13 15 9 11 5 15"/></svg>
+          <span style="font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: #0369a1;">Deployment fix</span>
+        </div>
+        <div style="padding: 14px 18px; display: flex; flex-direction: column; gap: 12px;">
+          <span style="font-size: 12px; color: #475569; line-height: 1.5;">Move three high-rate vehicles to peak-hour duty for the next 10 days to pull them out of the cluster window:</span>
+
+          <div style="display: flex; flex-direction: column; gap: 7px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 11px; border-radius: 5px; background: #f8fafc; border: 1px solid #e2e8f0;">
+              <span class="mono" style="font-size: 13px; font-weight: 800; color: #0f172a;">D29</span>
+              <span style="font-size: 11px; color: #64748b;">412 → 165 km/day</span>
+              <span class="mono" style="font-size: 11px; font-weight: 800; color: #0369a1;">+6 days</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 11px; border-radius: 5px; background: #f8fafc; border: 1px solid #e2e8f0;">
+              <span class="mono" style="font-size: 13px; font-weight: 800; color: #0f172a;">D44</span>
+              <span style="font-size: 11px; color: #64748b;">398 → 165 km/day</span>
+              <span class="mono" style="font-size: 11px; font-weight: 800; color: #0369a1;">+5 days</span>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 11px; border-radius: 5px; background: #f8fafc; border: 1px solid #e2e8f0;">
+              <span class="mono" style="font-size: 13px; font-weight: 800; color: #0f172a;">D51</span>
+              <span style="font-size: 11px; color: #64748b;">405 → 165 km/day</span>
+              <span class="mono" style="font-size: 11px; font-weight: 800; color: #0369a1;">+5 days</span>
+            </div>
+          </div>
+
+          <div style="padding: 10px 12px; border-radius: 5px; background: #ecfdf5; border: 1px solid #a7f3d0; display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 12px; color: #065f46; font-weight: 700;">Projected overflow</span>
+            <span class="mono" style="font-size: 13px; font-weight: 800; color: #065f46;">3 → 0 vehicles</span>
+          </div>
+
+          <span style="font-size: 11px; color: #64748b; line-height: 1.45;">Service coverage unaffected — D29, D44 and D51 are surplus to off-peak headway requirements.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

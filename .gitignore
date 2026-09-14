@@ -19,6 +19,11 @@ __pycache__/
 # Node
 node_modules/
 
+# Seeded design canvas -- ~2.5 MB of bundled editor, regenerated from the
+# .dc.html artboards + canvas.json alongside it. Source is tracked; this
+# output is not.
+design/railtech-dashboard.html
+
 # Editor / OS
 .DS_Store
 *.swp
