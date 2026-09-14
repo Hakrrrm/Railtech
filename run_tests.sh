@@ -45,4 +45,8 @@ echo "== tools/test_track_pipeline =="
 python3 tools/test_track_pipeline.py
 
 echo
+echo "== ingest/test_index (event_mapper) =="
+node ingest/test_index.js
+
+echo
 echo "run_tests.sh: all suites passed"

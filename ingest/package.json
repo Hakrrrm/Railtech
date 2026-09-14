@@ -1,0 +1,17 @@
+{
+  "name": "railtech-ingest-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Thin MQTT -> Supabase ingest bridge (Build Plan Sec 8).",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test_index.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "dotenv": "^16.4.5",
+    "mqtt": "^5.10.1"
+  }
+}

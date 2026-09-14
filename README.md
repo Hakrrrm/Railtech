@@ -27,6 +27,19 @@ firmware/
 tools/
   track_pipeline.py       GeoJSON + loop_lengths.csv -> segments.csv + track_data.h
   test_track_pipeline.py  self-tests (synthetic fixture, one violation per rule)
+supabase/
+  schema.sql          core tables (Build Plan Sec 8, TDD Sec 5.8)
+  seed.example.sql    example vehicle seed rows
+ingest/
+  event_mapper.js     pure Tier 1 JSON -> segment_traversals row mapping (host-testable)
+  index.js            MQTT -> Supabase bridge wiring
+  test_index.js       host tests for event_mapper.js
+  .env.example        documents every required env var; copy to .env (gitignored)
+frontend/
+  src/App.jsx         React/Vite dashboard -- reads segment_traversals/mileage_anchors via
+                       Supabase's anon key, Realtime-subscribed for live refresh; manual
+                       hubometer entry + OCR scan write to mileage_anchors
+  .env.example        VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY; copy to .env (gitignored)
 platformio.ini      PlatformIO project config -- src_dir is project-global, so every harness
                      stage lives under firmware/harness/<stage>/ with a per-env build_src_filter
                      selecting just its own subfolder
@@ -229,6 +242,34 @@ bring-up: some MQTT clients auto-convert straight quotes to curly/smart
 quotes as you type the payload, which used to be rejected outright as
 an unrecognised command (fixed -- the match is quote-style-agnostic
 now, but worth knowing if you ever add a stricter command later).
+
+## Supabase / ingest bridge setup (NOTES)
+
+1. Create a Supabase project, run `supabase/schema.sql` in the SQL editor.
+2. Copy `supabase/seed.example.sql`, adjust `lrv_id` values to match your
+   devices' `config.h` `MQTT_LRV_ID`/`MQTT_FLEET`, run it -- the FK on
+   `segment_traversals` rejects events for any vehicle not seeded here
+   (intentional).
+3. `cd ingest && npm install && cp .env.example .env` and fill in
+   `MQTT_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service-role key only --
+   never put it on the device).
+4. `npm start`.
+
+## Supabase / ingest bridge setup (DETAILS)
+
+Workflow: whenever you open the Codespace and want to turn the listener on,
+you only need to type these two lines:
+
+```
+cd ingest
+npm start
+```
+
+Credentials belong only in `ingest/.env` (gitignored, per `.env.example`) --
+never in this file or any other committed source. A real Supabase password
+was previously committed here in plaintext; it has been removed and must be
+treated as compromised -- rotate it in the Supabase dashboard if that has
+not already been done.
 
 ## Build stages
 
