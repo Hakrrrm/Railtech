@@ -142,6 +142,7 @@ function App() {
 
   // 8. Mathematically Derived Dashboard KPI Logic
   const inactiveLRVs = fleetData.filter(v => v.status === 'idle');
+  const availableDepotSpares = inactiveLRVs.length; // <-- ADDED: Fix for the undefined variable
   const activeRevenueFleet = fleetData.filter(v => v.status === 'in_service').length;
   
   const dueWithin7Days = allCycles.filter(c => {
@@ -291,7 +292,7 @@ function App() {
               <div style={{ display: 'flex', gap: '16px', flexShrink: 0 }}>
                 <KPICard icon={<Icons.Alert />} color="#dc2626" count={attentionCount} label="Maintenance attention" />
                 <KPICard icon={<Icons.Clock />} color="#d97706" count={dueWithin7Days} label="Due within 7 days" />
-                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={inactiveLRVs.length} label="Available spares" />
+                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={availableDepotSpares} label="Available spares" />
                 <KPICard icon={<Icons.Clipboard />} color="#475569" count="1" label="Mileage checks" />
               </div>
 
@@ -352,7 +353,7 @@ function App() {
                 </div>
               </div>
 
-              {/* 14-Day Maintenance Outlook */}
+              {/* Bottom Section: 14-Day Maintenance Outlook (FULL-WIDTH AS IN MOCKUP) */}
               <div style={{ flexShrink: 0, height: '140px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ margin: 0, fontSize: '13px', color: '#0f172a', fontWeight: '800', textTransform: 'uppercase' }}>14-Day Maintenance Outlook</h3>
@@ -365,7 +366,7 @@ function App() {
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '56px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>
                   {outlookBins.map((val, i) => (
                     <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0', minHeight: '3px' }}></div>
+                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0', minHeight: '3px', maxHeight: '100%' }}></div>
                     </div>
                   ))}
                 </div>
@@ -572,6 +573,7 @@ function App() {
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Vehicle</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Assignment Status</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Current Location</th>
+                          <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Shift Time Active</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px', textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
@@ -586,6 +588,9 @@ function App() {
                               {lrv.status === 'faulty' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#991b1b', fontWeight: '700', fontSize: '12px', background: '#fee2e2', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#dc2626' }}>●</span> Faulty</span>}
                             </td>
                             <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#475569' : '#94a3b8', fontWeight: '500' }}>{lrv.status === 'in_service' ? lrv.seg_id : 'Sengkang Depot'}</td>
+                            <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#0f172a' : '#94a3b8', fontFamily: 'monospace', fontWeight: '600' }}>
+                              {lrv.status === 'in_service' ? formatRunTime(lrv.run_time_minutes) : '--'}
+                            </td>
                             <td style={{ padding: '12px 20px', textAlign: 'right' }}>
                               <button 
                                 onClick={() => handleExamine(lrv.lrv_id)} 
