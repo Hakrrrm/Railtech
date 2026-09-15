@@ -398,6 +398,116 @@ set km_since = excluded.km_since,
     km_to_next = excluded.km_to_next,
     due_date = excluded.due_date;
 
+-- Operations planning configuration and scenarios. These records use stable
+-- demo keys so the seed can be rerun without touching operator-created data.
+insert into planning_settings (
+  fleet, forecast_horizon_days, deployment_safety_margin_km,
+  stale_telemetry_hours, minimum_service_vehicles, operating_timezone
+) values ('splrt', 14, 250, 12, 18, 'Asia/Singapore')
+on conflict (fleet) do update set
+  forecast_horizon_days = excluded.forecast_horizon_days,
+  deployment_safety_margin_km = excluded.deployment_safety_margin_km,
+  stale_telemetry_hours = excluded.stale_telemetry_hours,
+  minimum_service_vehicles = excluded.minimum_service_vehicles,
+  operating_timezone = excluded.operating_timezone,
+  updated_at = now();
+
+insert into maintenance_cycle_rules (
+  fleet, cycle_type, threshold_km, tolerance_km, duration_minutes,
+  compatible_bay_type
+) values
+  ('splrt',   2000,   2000, 120,  90, 'universal'),
+  ('splrt',  13000,  13000, 350, 150, 'universal'),
+  ('splrt',  40000,  40000, 600, 240, 'heavy'),
+  ('splrt', 120000, 120000, 900, 420, 'heavy'),
+  ('splrt', 360000, 360000, 1500, 720, 'heavy')
+on conflict (fleet, cycle_type) do update set
+  threshold_km = excluded.threshold_km,
+  tolerance_km = excluded.tolerance_km,
+  duration_minutes = excluded.duration_minutes,
+  compatible_bay_type = excluded.compatible_bay_type,
+  updated_at = now();
+
+insert into depot_bays (
+  bay_id, fleet, name, bay_type, opens_at, closes_at, active
+) values
+  ('SPLRT-BAY-1', 'splrt', 'Bay 1 · Routine', 'universal', '06:00', '23:00', true),
+  ('SPLRT-BAY-2', 'splrt', 'Bay 2 · Heavy', 'heavy', '06:00', '23:00', true)
+on conflict (bay_id) do update set
+  fleet = excluded.fleet,
+  name = excluded.name,
+  bay_type = excluded.bay_type,
+  opens_at = excluded.opens_at,
+  closes_at = excluded.closes_at,
+  active = excluded.active;
+
+delete from stock_changes where demo_key like 'demo:%';
+delete from maintenance_events where demo_key like 'demo:%';
+delete from maintenance_bookings where demo_key like 'demo:%';
+delete from duty_assignments where demo_key like 'demo:%';
+
+insert into maintenance_bookings (
+  demo_key, lrv_id, primary_cycle, bundled_cycles, bay_id,
+  start_at, end_at, status, notes
+) values
+  ('demo:booking:D18', 'D18', 2000, array[2000], 'SPLRT-BAY-1',
+    current_date + time '09:00', current_date + time '10:30', 'confirmed',
+    'Overdue 2K recall; vehicle already in depot'),
+  ('demo:booking:D07', 'D07', 13000, array[2000,13000], 'SPLRT-BAY-1',
+    current_date + 1 + time '09:00', current_date + 1 + time '11:30', 'proposed',
+    'Bundle the 2K and 13K cycles in one visit'),
+  ('demo:booking:D24', 'D24', 13000, array[2000,13000], 'SPLRT-BAY-1',
+    current_date + 2 + time '13:00', current_date + 2 + time '15:30', 'confirmed',
+    'Routine planned maintenance'),
+  ('demo:booking:D25', 'D25', 40000, array[2000,13000,40000], 'SPLRT-BAY-2',
+    current_date + 3 + time '08:00', current_date + 3 + time '12:00', 'confirmed',
+    '40K package with nested-cycle completion'),
+  ('demo:booking:D26', 'D26', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
+    current_date + 4 + time '08:00', current_date + 4 + time '15:00', 'proposed',
+    'Major planned inspection');
+
+insert into maintenance_events (
+  demo_key, lrv_id, completion_mileage_km, primary_cycle, reset_cycles,
+  technician_id, source, completed_at, notes
+)
+select
+  format('demo:event:%s', vehicle.lrv_id),
+  vehicle.lrv_id,
+  round((vehicle.latest_odo_km - vehicle.daily_km * (18 + vehicle.vehicle_no % 9))::numeric, 1),
+  case when vehicle.vehicle_no % 8 = 0 then 13000 else 2000 end,
+  case when vehicle.vehicle_no % 8 = 0 then array[2000,13000] else array[2000] end,
+  format('TECH_%s', lpad(((vehicle.vehicle_no % 6) + 1)::text, 2, '0')),
+  'demo:workshop-log',
+  date_trunc('day', now()) - (18 + vehicle.vehicle_no % 9) * interval '1 day' + interval '10 hours',
+  case when vehicle.vehicle_no % 8 = 0 then 'Completed bundled routine package' else 'Completed routine 2K inspection' end
+from _demo_vehicle_profile as vehicle;
+
+insert into duty_assignments (
+  demo_key, lrv_id, loop_id, slot_label, duty_start, duty_end, status
+)
+select
+  format('demo:duty:%s', vehicle.lrv_id),
+  vehicle.lrv_id,
+  case when vehicle.vehicle_no % 2 = 0 then 'Sengkang East Loop' else 'Sengkang West Loop' end,
+  format('Run %s', lpad(vehicle.vehicle_no::text, 2, '0')),
+  now() - interval '2 hours' + (vehicle.vehicle_no % 4) * interval '5 minutes',
+  now() + interval '5 hours' - (vehicle.vehicle_no % 3) * interval '10 minutes',
+  'active'
+from _demo_vehicle_profile as vehicle
+where vehicle.status = 'in_service'
+   or vehicle.lrv_id = 'D29';
+
+insert into stock_changes (
+  demo_key, withdrawn_assignment_id, withdrawn_lrv_id, replacement_lrv_id,
+  reason, projected_duty_km, decision_status, created_at
+)
+select
+  'demo:stock:D29:D27', assignment.id, 'D29', 'D27',
+  'Brake pressure fault reported in service; replace at the next safe handover',
+  118, 'proposed', now() - interval '12 minutes'
+from duty_assignments as assignment
+where assignment.demo_key = 'demo:duty:D29';
+
 commit;
 
 -- Compact load summary for the Supabase SQL editor.
@@ -420,4 +530,10 @@ select count(*) as synthetic_anchors
 from mileage_anchors
 where source like 'demo:%'
   and lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$';
+
+select
+  (select count(*) from maintenance_bookings where demo_key like 'demo:%') as bookings,
+  (select count(*) from maintenance_events where demo_key like 'demo:%') as maintenance_events,
+  (select count(*) from duty_assignments where demo_key like 'demo:%') as duties,
+  (select count(*) from stock_changes where demo_key like 'demo:%') as stock_changes;
 

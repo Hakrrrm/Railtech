@@ -5,6 +5,7 @@ frontend/.env
 
 # Ingest bridge dead-letter log (local runtime artifact)
 ingest/dead_letter.ndjson
+ingest/.simulator-state.json
 
 # PlatformIO
 .pio/
