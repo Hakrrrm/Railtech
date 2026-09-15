@@ -7,6 +7,8 @@ set local timezone to 'Asia/Singapore';
 do $validation$
 declare
   actual_count integer;
+  before_km numeric;
+  rejected boolean;
 begin
   select count(*)
   into actual_count
@@ -300,10 +302,118 @@ begin
   ) then
     raise exception 'D07-D09 frontend compatibility data is incomplete';
   end if;
+
+  if (select count(*) from maintenance_cycle_rules where fleet = 'splrt') <> 5 then
+    raise exception 'Expected five SPLRT maintenance cycle rules';
+  end if;
+
+  if (select count(*) from depot_bays where fleet = 'splrt' and active) <> 2 then
+    raise exception 'Expected two active SPLRT depot bays';
+  end if;
+
+  if (select count(*) from maintenance_bookings where demo_key like 'demo:%') <> 5 then
+    raise exception 'Expected five demo maintenance bookings';
+  end if;
+
+  if (select count(*) from maintenance_events where demo_key like 'demo:%') <> 30 then
+    raise exception 'Expected one demo maintenance event per vehicle';
+  end if;
+
+  if not exists (
+    select 1 from maintenance_bookings
+    where lrv_id = 'D07'
+      and primary_cycle = 13000
+      and bundled_cycles @> array[2000,13000]
+      and status = 'proposed'
+  ) then
+    raise exception 'D07 bundled booking scenario is missing';
+  end if;
+
+  if not exists (
+    select 1 from stock_changes
+    where demo_key = 'demo:stock:D29:D27'
+      and withdrawn_lrv_id = 'D29'
+      and replacement_lrv_id = 'D27'
+      and decision_status = 'proposed'
+  ) then
+    raise exception 'D29 to D27 stock-change scenario is missing';
+  end if;
+
+  if (select count(*) from vehicle_mileage_summary where fleet = 'splrt') <> 30 then
+    raise exception 'Mileage summary view must return all 30 demo vehicles';
+  end if;
+
+  if (select count(*) from cycle_forecasts) < 150 then
+    raise exception 'Cycle forecast view is missing demo cycle rows';
+  end if;
+
+  -- A duplicate sequence must not fire the insert trigger twice.
+  select km_since into before_km from cycle_state where lrv_id = 'D08' and cycle_type = 2000;
+  insert into segment_traversals (lrv_id, seq, seg_id, ts, length_m, dir, odo_km, confidence, hdop)
+  values ('D08', 999999999, 'VALIDATION_SEG', now(), 100, 'E', 102286.5, 0.99, 0.8)
+  on conflict (lrv_id, seq) do nothing;
+  insert into segment_traversals (lrv_id, seq, seg_id, ts, length_m, dir, odo_km, confidence, hdop)
+  values ('D08', 999999999, 'VALIDATION_SEG', now(), 100, 'E', 102286.5, 0.99, 0.8)
+  on conflict (lrv_id, seq) do nothing;
+  if abs((select km_since from cycle_state where lrv_id = 'D08' and cycle_type = 2000) - before_km - 0.1) > 0.0001 then
+    raise exception 'Duplicate SEG_DONE sequence incremented cycle state more than once';
+  end if;
+
+  -- The booking RPC must reject occupied bays, incompatible capability and
+  -- a plan that breaches the configured minimum operating fleet.
+  rejected := false;
+  begin
+    perform schedule_maintenance('D08', 2000, array[2000], 'SPLRT-BAY-1',
+      current_date + time '09:15', current_date + time '10:15', 'confirmed', 'collision test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'Overlapping bay booking was accepted'; end if;
+
+  insert into depot_bays (bay_id, fleet, name, bay_type, opens_at, closes_at, active)
+  values ('VALIDATION-BAY', 'splrt', 'Validation bay', 'routine', '06:00', '23:00', true);
+  rejected := false;
+  begin
+    perform schedule_maintenance('D25', 40000, array[2000,13000,40000], 'VALIDATION-BAY',
+      current_date + 6 + time '08:00', current_date + 6 + time '12:00', 'proposed', 'capability test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'Incompatible maintenance bay was accepted'; end if;
+
+  update planning_settings set minimum_service_vehicles = 22 where fleet = 'splrt';
+  rejected := false;
+  begin
+    perform schedule_maintenance('D08', 2000, array[2000], 'SPLRT-BAY-1',
+      current_date + 6 + time '16:00', current_date + 6 + time '17:30', 'confirmed', 'coverage test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'Service-coverage floor was not enforced'; end if;
+
+  -- Exercise the atomic nested reset inside this validation transaction.
+  -- The script rolls back below, leaving the seeded state untouched.
+  perform complete_maintenance(
+    'D25', 40000,
+    (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D25'),
+    'VALIDATION'
+  );
+
+  if exists (
+    select 1 from cycle_state
+    where lrv_id = 'D25'
+      and cycle_type in (2000, 13000, 40000)
+      and (km_since <> 0 or km_to_next <> cycle_type)
+  ) or (
+    select count(*) from cycle_state
+    where lrv_id = 'D25'
+      and cycle_type in (2000, 13000, 40000)
+      and km_since = 0
+      and km_to_next = cycle_type
+  ) <> 3 then
+    raise exception '40K completion did not reset 2K, 13K, and 40K';
+  end if;
 end
 $validation$;
 
-commit;
+rollback;
 
 -- Human-readable verification summary.
 select status, count(*) as vehicles

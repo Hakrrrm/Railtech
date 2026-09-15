@@ -36,9 +36,9 @@ ingest/
   test_index.js       host tests for event_mapper.js
   .env.example        documents every required env var; copy to .env (gitignored)
 frontend/
-  src/App.jsx         React/Vite dashboard -- reads segment_traversals/mileage_anchors via
-                       Supabase's anon key, Realtime-subscribed for live refresh; manual
-                       hubometer entry + OCR scan write to mileage_anchors
+  src/App.jsx         React/Vite operations dashboard shell and hash routes
+  src/pages/          fleet, vehicle, maintenance, deployment, evidence and settings pages
+  src/lib/api.js      page-specific Supabase reads and mutation RPC calls
   .env.example        VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY; copy to .env (gitignored)
 platformio.ini      PlatformIO project config -- src_dir is project-global, so every harness
                      stage lives under firmware/harness/<stage>/ with a per-env build_src_filter
@@ -246,7 +246,13 @@ now, but worth knowing if you ever add a stricter command later).
 ## Supabase / ingest bridge setup (NOTES)
 
 1. Create a Supabase project, run `supabase/schema.sql` in the SQL editor.
-2. Copy `supabase/seed.example.sql`, adjust `lrv_id` values to match your
+   For a project that already has the original four tables, run only
+   `supabase/migrations/202609150001_dashboard_operations_v2.sql`.
+2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
+   `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
+   function check inside a transaction and rolls it back, so seeded records are
+   unchanged. For a hardware-only project, copy `supabase/seed.example.sql` and
+   adjust `lrv_id` values to match your
    devices' `config.h` `MQTT_LRV_ID`/`MQTT_FLEET`, run it -- the FK on
    `segment_traversals` rejects events for any vehicle not seeded here
    (intentional).
@@ -254,6 +260,37 @@ now, but worth knowing if you ever add a stricter command later).
    `MQTT_URL` and `SUPABASE_SERVICE_ROLE_KEY` (service-role key only --
    never put it on the device).
 4. `npm start`.
+
+## Dashboard development
+
+The dashboard always reads Supabase. There is no separate browser-only mock
+mode, so synthetic and real telemetry exercise the same query paths.
+
+```powershell
+cd frontend
+Copy-Item .env.example .env
+# Fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then:
+npm install
+npm run dev
+```
+
+The seeded records stay static until new telemetry arrives. To demonstrate live
+movement, run the normal ingest bridge in one terminal and the optional device
+simulator in another. The simulator publishes the firmware's Tier 1 `SEG_DONE`
+shape over MQTT and persists its reserved sequence numbers locally; it never
+writes directly to Supabase.
+
+```powershell
+cd ingest
+Copy-Item .env.example .env
+# Fill in the MQTT and Supabase bridge values, then in separate terminals:
+npm start
+npm run simulate
+```
+
+Configure `SIM_VEHICLES`, `SIM_INTERVAL_MS`, `SIM_SPEED`, and `SIM_SCENARIO`
+(`normal`, `mixed_quality`, or `weak_gnss`) in `ingest/.env`. Stop the simulator
+with Ctrl+C. Its local `.simulator-state.json` file is gitignored.
 
 ## Supabase / ingest bridge setup (DETAILS)
 
