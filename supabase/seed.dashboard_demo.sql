@@ -121,7 +121,7 @@ event_grid as (
     (round(vehicle.daily_km / 4.5))::integer * 6 as events_in_day
   from _demo_vehicle_profile as vehicle
   cross join lateral generate_series(
-    -7,
+    -6,
     -vehicle.telemetry_stop_days
   ) as day_offset
   cross join lateral generate_series(
@@ -233,7 +233,7 @@ insert into mileage_anchors (
 )
 select
   lrv_id,
-  now() - age_days * interval '1 day' + interval '8 hours',
+  date_trunc('day', now()) - age_days * interval '1 day' + interval '8 hours',
   format('TECH_%s', lpad((((anchor_number + substring(lrv_id from 2)::integer) % 6) + 1)::text, 2, '0')),
   case when anchor_number = 3 then 'demo:ocr' else 'demo:manual' end,
   round((gnss_odo_km + divergence_km)::numeric, 1),
@@ -268,14 +268,14 @@ correction as (
   )
   select
     lrv_id,
-    now() - interval '3 days' + interval '8 hours 15 minutes',
+    date_trunc('day', now()) - interval '2 days' + interval '8 hours 15 minutes',
     'TECH_03',
     'demo:correction',
-    round((latest_odo_km - daily_km * 3 + 3.2)::numeric, 1),
+    round((latest_odo_km + 3.2)::numeric, 1),
     true,
     'Corrected synthetic digit transposition after photo review',
     'demo://anchors/D09/correction.jpg',
-    round((latest_odo_km - daily_km * 3)::numeric, 1),
+    latest_odo_km,
     3.2,
     null
   from d09
@@ -296,14 +296,14 @@ insert into mileage_anchors (
 )
 select
   d09.lrv_id,
-  now() - interval '4 days' + interval '8 hours',
+  date_trunc('day', now()) - interval '2 days' + interval '8 hours',
   'TECH_03',
   'demo:manual-error',
-  round((d09.latest_odo_km - d09.daily_km * 4 + 120)::numeric, 1),
+  round((d09.latest_odo_km + 120)::numeric, 1),
   true,
   'Synthetic digit transposition; superseded after photo review',
   'demo://anchors/D09/superseded.jpg',
-  round((d09.latest_odo_km - d09.daily_km * 4)::numeric, 1),
+  d09.latest_odo_km,
   120,
   correction.id
 from d09
