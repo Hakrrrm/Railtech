@@ -283,7 +283,7 @@ begin
 
   if exists (
     select demo_lrv
-    from unnest(array['D07', 'D08', 'D09']) as demo_lrv
+    from unnest(array['D07', 'D08', 'D09']::text[]) as demo(demo_lrv)
     where (
       select count(*)
       from segment_traversals
