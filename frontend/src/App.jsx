@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 
 // --- SVG ICONS (Enterprise standard, no emojis) ---
@@ -25,27 +25,62 @@ function App() {
   const [fleetData, setFleetData] = useState([])
   const [globalEvents, setGlobalEvents] = useState([])
   const [maintenanceAlerts, setMaintenanceAlerts] = useState([])
-  const fleetList = ['D01', 'D02', 'D03', 'D04', 'D05', 'D06', 'D07', 'D08', 'D09', 'D10']
-  const inactiveLRVs = fleetList.filter(id => !fleetData.some(active => active.lrv_id === id))
-
+  const [allCycles, setAllCycles] = useState([])
+  
   // --- VEHICLE & FORM DETAIL STATE ---
   const [lrvId, setLrvId] = useState('D07')
   const [manualReading, setManualReading] = useState('')
   const [gnssOdo, setGnssOdo] = useState(0)
   const [lastManualOdo, setLastManualOdo] = useState(0)
   const [recentEvents, setRecentEvents] = useState([])
+  const [auditLogs, setAuditLogs] = useState([]) // Restored state
   const [needsOverride, setNeedsOverride] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [message, setMessage] = useState('')
 
-  async function fetchData() {
-    const { data: traversals } = await supabase
-      .from('segment_traversals')
-      .select('ts, seg_id, dir, odo_km, hdop')
-      .eq('lrv_id', lrvId)
-      .order('seq', { ascending: false })
-      .limit(5)
+  // --- DATA FETCHING ---
+  const fetchFleetData = useCallback(async () => {
+    // Queries the full 30 vehicles demo fleet
+    const { data: vData } = await supabase.from('vehicles').select('*').order('id', { ascending: true }) 
+    // Fix: Orders by id descending to respect ingestion order rather than seq counters
+    const { data: traversals } = await supabase.from('segment_traversals').select('lrv_id, ts, seg_id, dir, odo_km, hdop').order('id', { ascending: false }).limit(150) 
+    const { data: runTimes } = await supabase.from('daily_run_time').select('*')
+    const { data: cycles } = await supabase.from('cycle_state').select('*').order('km_to_next', { ascending: true }) 
+
+    if (vData) {
+      const latestPerVehicle = {}
+      if (traversals) {
+        setGlobalEvents(traversals.slice(0, 10)) 
+        traversals.forEach(row => { if (!latestPerVehicle[row.lrv_id]) latestPerVehicle[row.lrv_id] = row })
+      }
       
+      const finalFleetArray = vData.map(v => {
+        const vId = v.id || v.lrv_id;
+        const telemetry = latestPerVehicle[vId] || {};
+        const runTimeRecord = runTimes?.find(rt => rt.lrv_id === vId);
+        return { 
+          lrv_id: vId,
+          status: v.status || 'idle', // Derived directly from vehicles.status
+          seg_id: telemetry.seg_id || 'Depot',
+          odo_km: telemetry.odo_km || 0,
+          hdop: telemetry.hdop || null,
+          run_time_minutes: runTimeRecord?.run_time_minutes ? Number(runTimeRecord.run_time_minutes) : 0 
+        }
+      })
+      setFleetData(finalFleetArray.sort((a, b) => a.lrv_id.localeCompare(b.lrv_id)))
+    }
+
+    if (cycles) {
+      setAllCycles(cycles);
+      setMaintenanceAlerts(cycles.filter(c => c.km_to_next < 1000));
+    }
+  }, []);
+
+  const fetchVehicleData = useCallback(async () => {
+    const targetLrv = selectedVehicle || lrvId;
+    if (!targetLrv) return;
+
+    const { data: traversals } = await supabase.from('segment_traversals').select('ts, seg_id, dir, odo_km, hdop').eq('lrv_id', targetLrv).order('id', { ascending: false }).limit(5)
     if (traversals && traversals.length > 0) {
       setGnssOdo(traversals[0].odo_km); 
       setRecentEvents(traversals);
@@ -54,37 +89,75 @@ function App() {
       setRecentEvents([]);
     }
 
-    const { data: anchors } = await supabase
-      .from('mileage_anchors')
-      .select('value_km')
-      .eq('lrv_id', lrvId)
-      .is('superseded_by', null)
-      .order('ts', { ascending: false })
-      .limit(1)
+    const { data: anchors } = await supabase.from('mileage_anchors').select('value_km').eq('lrv_id', targetLrv).is('superseded_by', null).order('ts', { ascending: false }).limit(1)
+    setLastManualOdo(anchors && anchors.length > 0 ? anchors[0].value_km : 0)
 
-    if (anchors && anchors.length > 0) {
-      setLastManualOdo(anchors[0].value_km)
-    } else {
-      setLastManualOdo(0)
-    }
+    const { data: history } = await supabase.from('mileage_anchors').select('ts, technician_id, value_km, divergence_km, override').eq('lrv_id', targetLrv).order('ts', { ascending: false }).limit(10)
+    if (history) setAuditLogs(history)
+  }, [selectedVehicle, lrvId]);
 
-    const { data: history } = await supabase
-      .from('mileage_anchors')
-      .select('ts, technician_id, value_km, divergence_km, override')
-      .eq('lrv_id', lrvId)
-      .order('ts', { ascending: false })
-      .limit(5)
-      
-    if (history) {
-      setAuditLogs(history)
-    } else {
-      setAuditLogs([])
+  // --- WEBSOCKET SUBSCRIPTION ---
+  useEffect(() => {
+    fetchFleetData(); 
+    fetchVehicleData();
+    const channelName = `realtime-feed-${Date.now()}`;
+    const channel = supabase.channel(channelName)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'segment_traversals' }, () => { fetchFleetData(); fetchVehicleData() })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mileage_anchors' }, () => { fetchFleetData(); fetchVehicleData() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cycle_state' }, () => { fetchFleetData() })
+      .subscribe();
+    return () => { supabase.removeChannel(channel) }
+  }, [fetchFleetData, fetchVehicleData])
+
+  // --- HELPERS & DERIVATIONS ---
+  const formatRunTime = (totalMinutes) => {
+    if (!totalMinutes || isNaN(totalMinutes) || totalMinutes < 1) return '--';
+    const d = Math.floor(totalMinutes / 1440);
+    const h = Math.floor((totalMinutes % 1440) / 60);
+    const m = Math.floor(totalMinutes % 60);
+    let parts = [];
+    if (d > 0) parts.push(`${d}d`);
+    if (h > 0) parts.push(`${h}h`);
+    if (m > 0 || parts.length === 0) parts.push(`${m}m`);
+    return parts.join(' ');
+  };
+
+  const getPMThresholds = (odo, vehicleId) => {
+    const vehicleCycles = allCycles.filter(c => c.lrv_id === vehicleId);
+    const defThreshold = (cycle) => cycle - ((odo || 0) % cycle);
+    return {
+      next2k: vehicleCycles.find(c => c.cycle_type === '2K')?.km_to_next ?? defThreshold(2000),
+      next13k: vehicleCycles.find(c => c.cycle_type === '13K')?.km_to_next ?? defThreshold(13000),
+      next40k: vehicleCycles.find(c => c.cycle_type === '40K')?.km_to_next ?? defThreshold(40000),
+      next120k: vehicleCycles.find(c => c.cycle_type === '120K')?.km_to_next ?? defThreshold(120000),
     }
   }
 
-  useEffect(() => {
-    fetchData()
-  }, [lrvId])
+  // Dashboard Aggregations (Derived from full database queries, not hardcodes)
+  const activeRevenueFleet = fleetData.filter(v => v.status === 'in_service').length;
+  const availableDepotSpares = fleetData.filter(v => v.status === 'idle').length;
+  const dueWithin7Days = allCycles.filter(c => c.km_to_next > 500 && c.km_to_next <= 2000).length;
+  const attentionCount = fleetData.filter(v => v.status === 'faulty' || v.status === 'maintenance').length + maintenanceAlerts.length;
+
+  const generate14DayOutlook = () => {
+    const bins = new Array(14).fill(0);
+    allCycles.forEach(c => {
+      if (c.km_to_next > 0) {
+        const daysToDue = Math.floor(c.km_to_next / 142); // Assumes roughly 142km/day burn rate
+        if (daysToDue >= 0 && daysToDue < 14) bins[daysToDue]++;
+      }
+    });
+    return bins;
+  };
+  const outlookBins = generate14DayOutlook();
+  const outlookDates = ['15 Sep', '16 Sep', '17 Sep', '18 Sep', '19 Sep', '20 Sep', '21 Sep', '22 Sep', '23 Sep', '24 Sep', '25 Sep', '26 Sep', '27 Sep', '28 Sep'];
+
+  // --- HANDLERS ---
+  const handleExamine = (id) => {
+    // Ensures state stays completely synced when drilling down
+    setSelectedVehicle(id);
+    setLrvId(id);
+  }
 
   const handleReadingChange = (e) => {
     const val = parseFloat(e.target.value); setManualReading(e.target.value)
@@ -135,7 +208,6 @@ function App() {
       
       {/* --- SIDEBAR --- */}
       <div style={{ width: '260px', background: '#0f172a', color: '#ffffff', display: 'flex', flexDirection: 'column', flexShrink: 0, zIndex: 100 }}>
-        {/* Updated Logo & Title Styling to match image_16b302 */}
         <div style={{ padding: '32px 24px', display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '8px' }}>
           <img src="https://www.lta.gov.sg/content/dam/ltagov/img/general/logo.png" alt="LTA Logo" style={{ width: '190px', height: 'auto', alignSelf: 'flex-start', filter: 'brightness(0) invert(1)' }} />
           <span style={{ fontSize: '22px', fontWeight: '900', letterSpacing: '0.5px', color: '#ffffff', whiteSpace: 'nowrap' }}>LRV Maintenance</span>
@@ -159,7 +231,6 @@ function App() {
         {/* Top Navbar */}
         <div style={{ height: '56px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 28px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            {/* Updated DEMO Badge to match image_16b629 */}
             <span style={{ background: '#f1f5f9', color: '#475569', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>DEMO</span>
             <span style={{ color: '#334155', fontSize: '14px', fontWeight: '500' }}>Sengkang East | 15 Sep 2026</span>
           </div>
@@ -202,9 +273,9 @@ function App() {
 
               {/* 4 KPI Cards */}
               <div style={{ display: 'flex', gap: '16px', flexShrink: 0 }}>
-                <KPICard icon={<Icons.Alert />} color="#dc2626" count={maintenanceAlerts.length || "0"} label="Maintenance attention" />
-                <KPICard icon={<Icons.Clock />} color="#d97706" count="4" label="Due within 7 days" />
-                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={inactiveLRVs.length} label="Available spares" />
+                <KPICard icon={<Icons.Alert />} color="#dc2626" count={attentionCount} label="Maintenance attention" />
+                <KPICard icon={<Icons.Clock />} color="#d97706" count={dueWithin7Days} label="Due within 7 days" />
+                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={availableDepotSpares} label="Available spares" />
                 <KPICard icon={<Icons.Clipboard />} color="#475569" count="1" label="Mileage checks" />
               </div>
 
@@ -230,11 +301,16 @@ function App() {
                         {fleetData.map((lrv) => (
                           <tr key={lrv.lrv_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
                             <td style={{ padding: '12px 20px', fontWeight: '800', color: '#0f172a' }}>{lrv.lrv_id}</td>
-                            <td style={{ padding: '12px 20px' }}><span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#166534', fontWeight: '700', fontSize: '12px', background: '#dcfce7', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#16a34a' }}>●</span> Serviceable</span></td>
+                            <td style={{ padding: '12px 20px' }}>
+                              {lrv.status === 'in_service' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#166534', fontWeight: '700', fontSize: '12px', background: '#dcfce7', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#16a34a' }}>●</span> Serviceable</span>}
+                              {lrv.status === 'idle' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontWeight: '700', fontSize: '12px', background: '#e2e8f0', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}>Depot / Spare</span>}
+                              {lrv.status === 'maintenance' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#92400e', fontWeight: '700', fontSize: '12px', background: '#fef3c7', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#d97706' }}>●</span> Maintenance</span>}
+                              {lrv.status === 'faulty' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#991b1b', fontWeight: '700', fontSize: '12px', background: '#fee2e2', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#dc2626' }}>●</span> Faulty</span>}
+                            </td>
                             <td style={{ padding: '12px 20px', fontWeight: '700', color: '#0f172a', fontFamily: 'monospace' }}>{lrv.odo_km.toFixed(1)} km</td>
                             <td style={{ padding: '12px 20px', color: '#64748b', fontWeight: '500' }}>{lrv.seg_id}</td>
                             <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                              <button onClick={() => setSelectedVehicle(lrv.lrv_id)} style={{ padding: '5px 14px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', color: '#334155', fontWeight: '700', cursor: 'pointer' }}>Examine</button>
+                              <button onClick={() => handleExamine(lrv.lrv_id)} style={{ padding: '5px 14px', background: '#f1f5f9', border: '1px solid #cbd5e1', borderRadius: '4px', color: '#334155', fontWeight: '700', cursor: 'pointer' }}>Examine</button>
                             </td>
                           </tr>
                         ))}
@@ -271,16 +347,16 @@ function App() {
 
                 {/* 14 Bar Columns */}
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '56px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>
-                  {[0, 0, 1, 0, 3, 1, 2, 0, 0, 1, 1, 0, 0, 0].map((val, i) => (
+                  {outlookBins.map((val, i) => (
                     <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0' }}></div>
+                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0', minHeight: '3px', maxHeight: '100%' }}></div>
                     </div>
                   ))}
                 </div>
 
                 {/* Date Labels */}
                 <div style={{ display: 'flex', gap: '8px', color: '#64748b', fontSize: '10px', textAlign: 'center', fontWeight: '600' }}>
-                  {['15 Sep', '16 Sep', '17 Sep', '18 Sep', '19 Sep', '20 Sep', '21 Sep', '22 Sep', '23 Sep', '24 Sep', '25 Sep', '26 Sep', '27 Sep', '28 Sep'].map((d, i) => (
+                  {outlookDates.map((d, i) => (
                     <div key={i} style={{ flex: 1 }}>{d}</div>
                   ))}
                 </div>
@@ -387,13 +463,11 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {fleetList.map((id) => {
-                          const activeLrv = fleetData.find(v => v.lrv_id === id);
-                          const currentOdo = activeLrv ? activeLrv.odo_km : 0;
-                          const pm = getPMThresholds(currentOdo);
+                        {fleetData.map((lrv) => {
+                          const pm = getPMThresholds(lrv.odo_km, lrv.lrv_id);
                           return (
-                            <tr key={id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                              <td style={{ padding: '10px', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #f1f5f9', background: '#f8fafc' }}>{id}</td>
+                            <tr key={lrv.lrv_id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                              <td style={{ padding: '10px', fontWeight: '800', color: '#0f172a', borderRight: '1px solid #f1f5f9', background: '#f8fafc' }}>{lrv.lrv_id}</td>
                               <td style={{ padding: '10px', fontFamily: 'monospace', fontWeight: '600', borderRight: '1px solid #f1f5f9', background: pm.next2k < 500 ? '#fbcfe8' : 'transparent', color: pm.next2k < 500 ? '#9d174d' : '#334155' }}>{Math.round(pm.next2k).toLocaleString()}</td>
                               <td style={{ padding: '10px', fontFamily: 'monospace', fontWeight: '600', borderRight: '1px solid #f1f5f9', background: pm.next13k < 500 ? '#fbcfe8' : 'transparent', color: pm.next13k < 500 ? '#9d174d' : '#334155' }}>{Math.round(pm.next13k).toLocaleString()}</td>
                               <td style={{ padding: '10px', fontFamily: 'monospace', fontWeight: '600', borderRight: '1px solid #f1f5f9', background: pm.next40k < 500 ? '#fbcfe8' : 'transparent', color: pm.next40k < 500 ? '#9d174d' : '#334155' }}>{Math.round(pm.next40k).toLocaleString()}</td>
@@ -412,7 +486,7 @@ function App() {
                     <h3 style={{ margin: 0, fontSize: '14px', color: '#0f172a', fontWeight: '800', textTransform: 'uppercase' }}>Log Hubometer PM (Technician Input)</h3>
                     <div style={{ display: 'flex', gap: '10px' }}>
                       <select value={lrvId} onChange={(e) => setLrvId(e.target.value)} style={{ padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', background: '#f8fafc', fontWeight: '700' }}>
-                        {fleetList.map(id => <option key={id} value={id}>{id}</option>)}
+                        {fleetData.map(v => <option key={v.lrv_id} value={v.lrv_id}>{v.lrv_id}</option>)}
                       </select>
                       <input type="number" step="0.1" value={manualReading} onChange={handleReadingChange} placeholder="Odometer value..." style={{ flex: 1, padding: '10px', borderRadius: '6px', border: '1px solid #cbd5e1', fontFamily: 'monospace', fontWeight: '600' }} />
                       <button onClick={handleSubmit} style={{ padding: '10px 20px', background: '#0ea5e9', color: 'white', border: 'none', borderRadius: '6px', fontWeight: '800', cursor: 'pointer' }}>Submit</button>
@@ -441,9 +515,18 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          <tr style={{ borderBottom: '1px solid #f1f5f9' }}><td style={{ padding: '10px' }}>14 Sep</td><td style={{ fontWeight: '800' }}>D07</td><td>2K Insp.</td><td style={{ fontFamily: 'monospace', color: '#dc2626', fontWeight: '700' }}>128,420</td></tr>
-                          <tr style={{ borderBottom: '1px solid #f1f5f9' }}><td style={{ padding: '10px' }}>12 Sep</td><td style={{ fontWeight: '800' }}>D03</td><td>13K Insp.</td><td style={{ fontFamily: 'monospace', color: '#dc2626', fontWeight: '700' }}>84,210</td></tr>
-                          <tr style={{ borderBottom: '1px solid #f1f5f9' }}><td style={{ padding: '10px' }}>10 Sep</td><td style={{ fontWeight: '800' }}>D05</td><td>2K Insp.</td><td style={{ fontFamily: 'monospace', color: '#dc2626', fontWeight: '700' }}>12,305</td></tr>
+                          {auditLogs.length === 0 ? (
+                            <tr><td colSpan="4" style={{ padding: '16px', color: '#64748b' }}>No recent records found.</td></tr>
+                          ) : (
+                            auditLogs.map((log, idx) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                <td style={{ padding: '10px' }}>{new Date(log.ts).toLocaleDateString()}</td>
+                                <td style={{ fontWeight: '800' }}>{log.lrv_id || '--'}</td>
+                                <td>{log.override ? 'Override' : 'Routine'}</td>
+                                <td style={{ fontFamily: 'monospace', fontWeight: '700' }}>{log.value_km}</td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -481,58 +564,55 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {fleetList.map((id) => {
-                          const active = fleetData.find(v => v.lrv_id === id);
-                          return (
-                            <tr key={id} style={{ borderBottom: '1px solid #f1f5f9', background: active ? 'transparent' : '#f8fafc' }}>
-                              <td style={{ padding: '12px 20px', fontWeight: '800', color: active ? '#0f172a' : '#94a3b8' }}>{id}</td>
-                              <td style={{ padding: '12px 20px' }}>
-                                {active 
-                                  ? <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0369a1', fontWeight: '700', fontSize: '12px', background: '#e0f2fe', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#0284c7' }}>●</span> Revenue Service</span>
-                                  : <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontWeight: '700', fontSize: '12px', background: '#e2e8f0', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}>Depot / Spare</span>
-                                }
-                              </td>
-                              <td style={{ padding: '12px 20px', color: active ? '#475569' : '#94a3b8', fontWeight: '500' }}>{active ? active.seg_id : 'Sengkang Depot'}</td>
-                              <td style={{ padding: '12px 20px', color: active ? '#0f172a' : '#94a3b8', fontFamily: 'monospace', fontWeight: '600' }}>
-                                {active ? formatRunTime(active.run_time_minutes) : '--'}
-                              </td>
-                              <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                                <button 
-                                  onClick={() => setSelectedVehicle(id)} 
-                                  style={{ 
-                                    padding: '5px 14px', 
-                                    background: active ? '#f1f5f9' : '#ffffff', 
-                                    border: '1px solid #cbd5e1', 
-                                    borderRadius: '4px', 
-                                    color: active ? '#334155' : '#0f766e', 
-                                    fontWeight: '700', 
-                                    cursor: 'pointer',
-                                    transition: 'all 0.15s ease-in-out'
-                                  }}
-                                >
-                                  {active ? 'Examine' : 'Assign'}
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
+                        {fleetData.map((lrv) => (
+                          <tr key={lrv.lrv_id} style={{ borderBottom: '1px solid #f1f5f9', background: lrv.status === 'in_service' ? 'transparent' : '#f8fafc' }}>
+                            <td style={{ padding: '12px 20px', fontWeight: '800', color: lrv.status === 'in_service' ? '#0f172a' : '#94a3b8' }}>{lrv.lrv_id}</td>
+                            <td style={{ padding: '12px 20px' }}>
+                              {lrv.status === 'in_service' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0369a1', fontWeight: '700', fontSize: '12px', background: '#e0f2fe', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#0284c7' }}>●</span> Revenue Service</span>}
+                              {lrv.status === 'idle' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontWeight: '700', fontSize: '12px', background: '#e2e8f0', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}>Depot / Spare</span>}
+                              {lrv.status === 'maintenance' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#92400e', fontWeight: '700', fontSize: '12px', background: '#fef3c7', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#d97706' }}>●</span> Maintenance</span>}
+                              {lrv.status === 'faulty' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#991b1b', fontWeight: '700', fontSize: '12px', background: '#fee2e2', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#dc2626' }}>●</span> Faulty</span>}
+                            </td>
+                            <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#475569' : '#94a3b8', fontWeight: '500' }}>{lrv.status === 'in_service' ? lrv.seg_id : 'Sengkang Depot'}</td>
+                            <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#0f172a' : '#94a3b8', fontFamily: 'monospace', fontWeight: '600' }}>
+                              {lrv.status === 'in_service' ? formatRunTime(lrv.run_time_minutes) : '--'}
+                            </td>
+                            <td style={{ padding: '12px 20px', textAlign: 'right' }}>
+                              <button 
+                                onClick={() => handleExamine(lrv.lrv_id)} 
+                                style={{ 
+                                  padding: '5px 14px', 
+                                  background: lrv.status === 'in_service' ? '#f1f5f9' : '#ffffff', 
+                                  border: '1px solid #cbd5e1', 
+                                  borderRadius: '4px', 
+                                  color: lrv.status === 'in_service' ? '#334155' : '#0f766e', 
+                                  fontWeight: '700', 
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease-in-out'
+                                }}
+                              >
+                                {lrv.status === 'idle' ? 'Assign' : 'Examine'}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
                 </div>
 
                 {/* Deployment Metrics */}
-                <div style={{ flex: '1', display: 'flex', flexDirection: 'column', gap: '24px', minHeight: 0 }}>
+                <div style={{ flex: '1', display: 'flex', flexDirection: 'column', gap: '20px', minHeight: 0 }}>
                   <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                     <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', marginBottom: '12px' }}>Active Revenue Fleet</div>
-                    <div style={{ fontSize: '64px', color: '#0f172a', fontWeight: '900', letterSpacing: '-3px', lineHeight: '1' }}>{fleetData.length}<span style={{ fontSize: '24px', color: '#cbd5e1', fontWeight: '600', letterSpacing: '0' }}> / 10</span></div>
+                    <div style={{ fontSize: '64px', color: '#0f172a', fontWeight: '900', letterSpacing: '-3px', lineHeight: '1' }}>{activeRevenueFleet}<span style={{ fontSize: '24px', color: '#cbd5e1', fontWeight: '600', letterSpacing: '0' }}> / {fleetData.length}</span></div>
                     <div style={{ marginTop: '20px', display: 'flex', gap: '6px', alignItems: 'center', color: '#166534', background: '#dcfce7', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '700' }}>
                       <Icons.MapPin /> Optimal Deployment Level
                     </div>
                   </div>
                   <div style={{ background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '32px 24px', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
                     <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', marginBottom: '12px' }}>Available Depot Spares</div>
-                    <div style={{ fontSize: '64px', color: '#0f172a', fontWeight: '900', letterSpacing: '-3px', lineHeight: '1' }}>{inactiveLRVs.length}</div>
+                    <div style={{ fontSize: '64px', color: '#0f172a', fontWeight: '900', letterSpacing: '-3px', lineHeight: '1' }}>{availableDepotSpares}</div>
                     <p style={{ margin: '16px 0 0 0', fontSize: '13px', color: '#475569', lineHeight: '1.5' }}>Ready for immediate injection into Sengkang East loop if required.</p>
                   </div>
                 </div>
