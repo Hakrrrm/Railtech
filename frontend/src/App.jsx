@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from './supabaseClient'
 
-// --- SVG ICONS (Enterprise standard, no emojis) ---
+// --- SVG ICONS ---
 const Icons = {
   Grid: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>,
   Wrench: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>,
@@ -24,62 +24,68 @@ function App() {
   // --- FLEET DATA STATE ---
   const [fleetData, setFleetData] = useState([])
   const [globalEvents, setGlobalEvents] = useState([])
-  const [maintenanceAlerts, setMaintenanceAlerts] = useState([])
+  const [globalAuditLogs, setGlobalAuditLogs] = useState([])
   const [allCycles, setAllCycles] = useState([])
-  
+
   // --- VEHICLE & FORM DETAIL STATE ---
   const [lrvId, setLrvId] = useState('D07')
   const [manualReading, setManualReading] = useState('')
   const [gnssOdo, setGnssOdo] = useState(0)
   const [lastManualOdo, setLastManualOdo] = useState(0)
   const [recentEvents, setRecentEvents] = useState([])
-  const [auditLogs, setAuditLogs] = useState([]) // Restored state
+  const [auditLogs, setAuditLogs] = useState([])
   const [needsOverride, setNeedsOverride] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [message, setMessage] = useState('')
 
   // --- DATA FETCHING ---
   const fetchFleetData = useCallback(async () => {
-    // Queries the full 30 vehicles demo fleet
-    const { data: vData } = await supabase.from('vehicles').select('*').order('id', { ascending: true }) 
-    // Fix: Orders by id descending to respect ingestion order rather than seq counters
-    const { data: traversals } = await supabase.from('segment_traversals').select('lrv_id, ts, seg_id, dir, odo_km, hdop').order('id', { ascending: false }).limit(150) 
-    const { data: runTimes } = await supabase.from('daily_run_time').select('*')
+    // 1. Fetch full vehicle list ordered by lrv_id
+    const { data: vData } = await supabase.from('vehicles').select('*').order('lrv_id', { ascending: true }) 
     const { data: cycles } = await supabase.from('cycle_state').select('*').order('km_to_next', { ascending: true }) 
+    
+    // Global logs for the fleet view
+    const { data: globalT } = await supabase.from('segment_traversals').select('lrv_id, ts, seg_id, dir, odo_km, hdop').order('id', { ascending: false }).limit(10)
+    if (globalT) setGlobalEvents(globalT)
+
+    const { data: globalLogs } = await supabase.from('mileage_anchors').select('lrv_id, ts, technician_id, value_km, divergence_km, override').order('id', { ascending: false }).limit(10)
+    if (globalLogs) setGlobalAuditLogs(globalLogs)
 
     if (vData) {
-      const latestPerVehicle = {}
-      if (traversals) {
-        setGlobalEvents(traversals.slice(0, 10)) 
-        traversals.forEach(row => { if (!latestPerVehicle[row.lrv_id]) latestPerVehicle[row.lrv_id] = row })
-      }
+      // 4. Fetch the absolute latest traversal per vehicle via mapping
+      const traversalPromises = vData.map(v => 
+        supabase.from('segment_traversals').select('lrv_id, ts, seg_id, dir, odo_km, hdop').eq('lrv_id', v.lrv_id).order('id', { ascending: false }).limit(1)
+      );
+      const traversalResults = await Promise.all(traversalPromises);
       
+      const latestPerVehicle = {};
+      traversalResults.forEach(res => {
+        if (res.data && res.data.length > 0) {
+          latestPerVehicle[res.data[0].lrv_id] = res.data[0];
+        }
+      });
+
       const finalFleetArray = vData.map(v => {
-        const vId = v.id || v.lrv_id;
-        const telemetry = latestPerVehicle[vId] || {};
-        const runTimeRecord = runTimes?.find(rt => rt.lrv_id === vId);
+        const telemetry = latestPerVehicle[v.lrv_id] || {};
         return { 
-          lrv_id: vId,
-          status: v.status || 'idle', // Derived directly from vehicles.status
+          lrv_id: v.lrv_id,
+          status: v.status || 'idle', // 9. Use pure vehicle status 
           seg_id: telemetry.seg_id || 'Depot',
           odo_km: telemetry.odo_km || 0,
           hdop: telemetry.hdop || null,
-          run_time_minutes: runTimeRecord?.run_time_minutes ? Number(runTimeRecord.run_time_minutes) : 0 
+          run_time_minutes: null // 2. Deprecated daily_run_time mapping
         }
       })
-      setFleetData(finalFleetArray.sort((a, b) => a.lrv_id.localeCompare(b.lrv_id)))
+      setFleetData(finalFleetArray)
     }
-
-    if (cycles) {
-      setAllCycles(cycles);
-      setMaintenanceAlerts(cycles.filter(c => c.km_to_next < 1000));
-    }
+    if (cycles) setAllCycles(cycles);
   }, []);
 
   const fetchVehicleData = useCallback(async () => {
     const targetLrv = selectedVehicle || lrvId;
     if (!targetLrv) return;
 
+    // 7. Sort explicitly by id descending
     const { data: traversals } = await supabase.from('segment_traversals').select('ts, seg_id, dir, odo_km, hdop').eq('lrv_id', targetLrv).order('id', { ascending: false }).limit(5)
     if (traversals && traversals.length > 0) {
       setGnssOdo(traversals[0].odo_km); 
@@ -92,26 +98,26 @@ function App() {
     const { data: anchors } = await supabase.from('mileage_anchors').select('value_km').eq('lrv_id', targetLrv).is('superseded_by', null).order('ts', { ascending: false }).limit(1)
     setLastManualOdo(anchors && anchors.length > 0 ? anchors[0].value_km : 0)
 
-    const { data: history } = await supabase.from('mileage_anchors').select('ts, technician_id, value_km, divergence_km, override').eq('lrv_id', targetLrv).order('ts', { ascending: false }).limit(10)
+    // 5. Included lrv_id in history pull
+    const { data: history } = await supabase.from('mileage_anchors').select('lrv_id, ts, technician_id, value_km, divergence_km, override').eq('lrv_id', targetLrv).order('id', { ascending: false }).limit(10)
     if (history) setAuditLogs(history)
   }, [selectedVehicle, lrvId]);
 
   // --- WEBSOCKET SUBSCRIPTION ---
   useEffect(() => {
-    fetchFleetData(); 
-    fetchVehicleData();
-    const channelName = `realtime-feed-${Date.now()}`;
-    const channel = supabase.channel(channelName)
+    fetchFleetData(); fetchVehicleData();
+    const channelName = `realtime-feed-${Date.now()}`
+    const lrvChannel = supabase.channel(channelName)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'segment_traversals' }, () => { fetchFleetData(); fetchVehicleData() })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mileage_anchors' }, () => { fetchFleetData(); fetchVehicleData() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'cycle_state' }, () => { fetchFleetData() })
-      .subscribe();
-    return () => { supabase.removeChannel(channel) }
+      .subscribe()
+    return () => { supabase.removeChannel(lrvChannel) }
   }, [fetchFleetData, fetchVehicleData])
 
   // --- HELPERS & DERIVATIONS ---
   const formatRunTime = (totalMinutes) => {
-    if (!totalMinutes || isNaN(totalMinutes) || totalMinutes < 1) return '--';
+    if (totalMinutes === null || totalMinutes === undefined || isNaN(totalMinutes) || totalMinutes < 1) return '--';
     const d = Math.floor(totalMinutes / 1440);
     const h = Math.floor((totalMinutes % 1440) / 60);
     const m = Math.floor(totalMinutes % 60);
@@ -125,36 +131,53 @@ function App() {
   const getPMThresholds = (odo, vehicleId) => {
     const vehicleCycles = allCycles.filter(c => c.lrv_id === vehicleId);
     const defThreshold = (cycle) => cycle - ((odo || 0) % cycle);
+    // 3. Strict numeric cycle matching
     return {
-      next2k: vehicleCycles.find(c => c.cycle_type === '2K')?.km_to_next ?? defThreshold(2000),
-      next13k: vehicleCycles.find(c => c.cycle_type === '13K')?.km_to_next ?? defThreshold(13000),
-      next40k: vehicleCycles.find(c => c.cycle_type === '40K')?.km_to_next ?? defThreshold(40000),
-      next120k: vehicleCycles.find(c => c.cycle_type === '120K')?.km_to_next ?? defThreshold(120000),
+      next2k: vehicleCycles.find(c => c.cycle_type === 2000)?.km_to_next ?? defThreshold(2000),
+      next13k: vehicleCycles.find(c => c.cycle_type === 13000)?.km_to_next ?? defThreshold(13000),
+      next40k: vehicleCycles.find(c => c.cycle_type === 40000)?.km_to_next ?? defThreshold(40000),
+      next120k: vehicleCycles.find(c => c.cycle_type === 120000)?.km_to_next ?? defThreshold(120000),
     }
   }
 
-  // Dashboard Aggregations (Derived from full database queries, not hardcodes)
+  // 8. Mathematically Derived Dashboard KPI Logic
+  const inactiveLRVs = fleetData.filter(v => v.status === 'idle');
   const activeRevenueFleet = fleetData.filter(v => v.status === 'in_service').length;
-  const availableDepotSpares = fleetData.filter(v => v.status === 'idle').length;
-  const dueWithin7Days = allCycles.filter(c => c.km_to_next > 500 && c.km_to_next <= 2000).length;
-  const attentionCount = fleetData.filter(v => v.status === 'faulty' || v.status === 'maintenance').length + maintenanceAlerts.length;
+  
+  const dueWithin7Days = allCycles.filter(c => {
+    if (!c.due_date) return false;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const dd = new Date(c.due_date); dd.setHours(0,0,0,0);
+    const diff = Math.floor((dd - today) / (1000 * 60 * 60 * 24));
+    return diff >= 0 && diff <= 7;
+  }).length;
 
+  const attentionCount = fleetData.filter(v => v.status === 'faulty' || v.status === 'maintenance').length + allCycles.filter(c => c.km_to_next < 500).length;
+  
   const generate14DayOutlook = () => {
     const bins = new Array(14).fill(0);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
     allCycles.forEach(c => {
-      if (c.km_to_next > 0) {
-        const daysToDue = Math.floor(c.km_to_next / 142); // Assumes roughly 142km/day burn rate
-        if (daysToDue >= 0 && daysToDue < 14) bins[daysToDue]++;
+      if (c.due_date) {
+        const dd = new Date(c.due_date); dd.setHours(0, 0, 0, 0);
+        const diffDays = Math.floor((dd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        if (diffDays >= 0 && diffDays < 14) bins[diffDays]++;
       }
     });
     return bins;
   };
+
   const outlookBins = generate14DayOutlook();
-  const outlookDates = ['15 Sep', '16 Sep', '17 Sep', '18 Sep', '19 Sep', '20 Sep', '21 Sep', '22 Sep', '23 Sep', '24 Sep', '25 Sep', '26 Sep', '27 Sep', '28 Sep'];
+  const outlookDates = Array.from({length: 14}, (_, i) => {
+    const d = new Date(); d.setDate(d.getDate() + i);
+    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  });
+
+  const nextActionLrv = allCycles.filter(c => c.km_to_next > 0).sort((a,b) => a.km_to_next - b.km_to_next)[0];
 
   // --- HANDLERS ---
   const handleExamine = (id) => {
-    // Ensures state stays completely synced when drilling down
+    // 5. Perfect Sync: Selected vehicle drills down, setting lrvId prepares form logic
     setSelectedVehicle(id);
     setLrvId(id);
   }
@@ -225,19 +248,18 @@ function App() {
         </div>
       </div>
 
-      {/* --- MAIN CONTENT AREA (Strict Zero-Scroll Canvas) --- */}
+      {/* --- MAIN CONTENT AREA --- */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         
         {/* Top Navbar */}
         <div style={{ height: '56px', background: '#ffffff', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 28px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
             <span style={{ background: '#f1f5f9', color: '#475569', padding: '6px 12px', borderRadius: '6px', fontSize: '12px', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>DEMO</span>
-            <span style={{ color: '#334155', fontSize: '14px', fontWeight: '500' }}>Sengkang East | 15 Sep 2026</span>
+            <span style={{ color: '#334155', fontSize: '14px', fontWeight: '500' }}>Sengkang East | {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#475569', fontWeight: '600' }}><span style={{ color: '#10b981' }}>●</span> Operations View</span>
             
-            {/* Admin Menu Dropdown */}
             <div style={{ position: 'relative' }}>
               <div onClick={() => setAdminMenuOpen(!adminMenuOpen)} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#475569', fontWeight: '600', cursor: 'pointer', padding: '6px 10px', borderRadius: '6px', background: adminMenuOpen ? '#f1f5f9' : 'transparent' }}>
                 <div style={{ background: '#475569', color: 'white', width: '26px', height: '26px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', fontWeight: '800' }}>AD</div>
@@ -245,19 +267,15 @@ function App() {
               </div>
               {adminMenuOpen && (
                 <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '6px', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)', width: '160px', zIndex: 100, overflow: 'hidden' }}>
-                  <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#475569', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }} onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'} onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>
-                    <Icons.Settings /> System Settings
-                  </div>
-                  <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#dc2626', cursor: 'pointer' }} onMouseOver={(e) => e.currentTarget.style.background = '#fef2f2'} onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>
-                     Sign Out
-                  </div>
+                  <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#475569', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }} onMouseOver={(e) => e.currentTarget.style.background = '#f8fafc'} onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}><Icons.Settings /> System Settings</div>
+                  <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#dc2626', cursor: 'pointer' }} onMouseOver={(e) => e.currentTarget.style.background = '#fef2f2'} onMouseOut={(e) => e.currentTarget.style.background = 'transparent'}>Sign Out</div>
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* Viewport Canvas (Locked exactly to viewport) */}
+        {/* Viewport Canvas */}
         <div style={{ flex: 1, padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: '18px', overflow: 'hidden' }}>
 
           {/* ========================================== */}
@@ -265,21 +283,18 @@ function App() {
           {/* ========================================== */}
           {activeNav === 'fleet_overview' && !selectedVehicle && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: '100%' }}>
-              {/* Header */}
               <div style={{ flexShrink: 0 }}>
                 <h1 style={{ margin: '0 0 4px 0', fontSize: '24px', color: '#0f172a', fontWeight: '900' }}>Fleet Overview</h1>
                 <p style={{ margin: 0, color: '#475569', fontSize: '13px' }}>Real-time telemetry and immediate tactical priorities.</p>
               </div>
 
-              {/* 4 KPI Cards */}
               <div style={{ display: 'flex', gap: '16px', flexShrink: 0 }}>
                 <KPICard icon={<Icons.Alert />} color="#dc2626" count={attentionCount} label="Maintenance attention" />
                 <KPICard icon={<Icons.Clock />} color="#d97706" count={dueWithin7Days} label="Due within 7 days" />
-                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={availableDepotSpares} label="Available spares" />
+                <KPICard icon={<Icons.Gear />} color="#0ea5e9" count={inactiveLRVs.length} label="Available spares" />
                 <KPICard icon={<Icons.Clipboard />} color="#475569" count="1" label="Mileage checks" />
               </div>
 
-              {/* Middle Section: Split Table & Next Best Action */}
               <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
                 {/* Priority Vehicles Table */}
                 <div style={{ flex: '2', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -324,7 +339,9 @@ function App() {
                   <h3 style={{ margin: 0, fontSize: '14px', color: '#0f172a', fontWeight: '800', textTransform: 'uppercase' }}>Next Best Action</h3>
                   <div style={{ width: '36px', height: '36px', background: '#e0f2fe', color: '#0284c7', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Icons.Train /></div>
                   <div>
-                    <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', color: '#0f172a', fontWeight: '800', lineHeight: '1.4' }}>{fleetData[0]?.lrv_id || 'D07'} reaching 2K threshold.</h4>
+                    <h4 style={{ margin: '0 0 4px 0', fontSize: '14px', color: '#0f172a', fontWeight: '800', lineHeight: '1.4' }}>
+                      {nextActionLrv ? `${nextActionLrv.lrv_id} reaching ${nextActionLrv.cycle_type === 2000 ? '2K' : nextActionLrv.cycle_type === 13000 ? '13K' : nextActionLrv.cycle_type === 40000 ? '40K' : '120K'} threshold.` : "Fleet operating nominally."}
+                    </h4>
                     <p style={{ margin: 0, fontSize: '12px', color: '#475569' }}>Review schedule for preemptive depot slot.</p>
                   </div>
                   <button onClick={() => setActiveNav('maintenance')} style={{ width: '100%', padding: '10px', background: '#0f766e', color: '#ffffff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>Open Maintenance Plan</button>
@@ -335,7 +352,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Bottom Section: 14-Day Maintenance Outlook (FULL-WIDTH AS IN MOCKUP) */}
+              {/* 14-Day Maintenance Outlook */}
               <div style={{ flexShrink: 0, height: '140px', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h3 style={{ margin: 0, fontSize: '13px', color: '#0f172a', fontWeight: '800', textTransform: 'uppercase' }}>14-Day Maintenance Outlook</h3>
@@ -345,20 +362,16 @@ function App() {
                   </div>
                 </div>
 
-                {/* 14 Bar Columns */}
                 <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '56px', borderBottom: '1px solid #e2e8f0', paddingBottom: '4px' }}>
                   {outlookBins.map((val, i) => (
                     <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}>
-                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0', minHeight: '3px', maxHeight: '100%' }}></div>
+                      <div style={{ width: '100%', height: val === 0 ? '3px' : `${val * 30}%`, background: val > 0 ? '#0f766e' : '#f1f5f9', borderRadius: '3px 3px 0 0', minHeight: '3px' }}></div>
                     </div>
                   ))}
                 </div>
 
-                {/* Date Labels */}
                 <div style={{ display: 'flex', gap: '8px', color: '#64748b', fontSize: '10px', textAlign: 'center', fontWeight: '600' }}>
-                  {outlookDates.map((d, i) => (
-                    <div key={i} style={{ flex: 1 }}>{d}</div>
-                  ))}
+                  {outlookDates.map((d, i) => <div key={i} style={{ flex: 1 }}>{d}</div>)}
                 </div>
               </div>
             </div>
@@ -375,7 +388,7 @@ function App() {
                   <h1 style={{ margin: '0 0 2px 0', fontSize: '28px', color: '#0f172a', fontWeight: '900' }}>{selectedVehicle}</h1>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '16px' }}>
-                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#166534', fontWeight: '700', fontSize: '12px', background: '#dcfce7', padding: '6px 12px', borderRadius: '6px' }}><span style={{ color: '#16a34a' }}>●</span> Serviceable</span>
+                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#166534', fontWeight: '700', fontSize: '12px', background: '#dcfce7', padding: '6px 12px', borderRadius: '6px' }}><span style={{ color: '#16a34a' }}>●</span> Tracking Active</span>
                    <button style={{ padding: '8px 16px', background: '#0f766e', color: '#ffffff', border: 'none', borderRadius: '6px', fontWeight: '700', fontSize: '13px', cursor: 'pointer' }}>Plan Recall</button>
                 </div>
               </div>
@@ -427,7 +440,7 @@ function App() {
                   <div style={{ flex: 1, border: '2px dashed #cbd5e1', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div style={{ width: '280px', height: '90px', border: '5px solid #e2e8f0', borderRadius: '45px', position: 'relative' }}>
                       <div style={{ position: 'absolute', top: '-10px', left: '60%', width: '15px', height: '15px', background: '#10b981', border: '3px solid #fff', borderRadius: '50%', boxShadow: '0 0 0 2px #10b981' }}></div>
-                      <div style={{ position: 'absolute', top: '-28px', left: '55%', fontSize: '12px', fontWeight: '800', color: '#0f172a' }}>{recentEvents[0]?.seg_id || 'Sengkang East'}</div>
+                      <div style={{ position: 'absolute', top: '-28px', left: '55%', fontSize: '12px', fontWeight: '800', color: '#0f172a' }}>{recentEvents[0]?.seg_id || 'Depot'}</div>
                     </div>
                   </div>
                 </div>
@@ -515,10 +528,10 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {auditLogs.length === 0 ? (
+                          {globalAuditLogs.length === 0 ? (
                             <tr><td colSpan="4" style={{ padding: '16px', color: '#64748b' }}>No recent records found.</td></tr>
                           ) : (
-                            auditLogs.map((log, idx) => (
+                            globalAuditLogs.map((log, idx) => (
                               <tr key={idx} style={{ borderBottom: '1px solid #f1f5f9' }}>
                                 <td style={{ padding: '10px' }}>{new Date(log.ts).toLocaleDateString()}</td>
                                 <td style={{ fontWeight: '800' }}>{log.lrv_id || '--'}</td>
@@ -559,7 +572,6 @@ function App() {
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Vehicle</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Assignment Status</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Current Location</th>
-                          <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px' }}>Shift Time Active</th>
                           <th style={{ padding: '12px 20px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', fontSize: '11px', textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
@@ -574,9 +586,6 @@ function App() {
                               {lrv.status === 'faulty' && <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#991b1b', fontWeight: '700', fontSize: '12px', background: '#fee2e2', padding: '3px 8px', borderRadius: '4px', width: 'fit-content' }}><span style={{ color: '#dc2626' }}>●</span> Faulty</span>}
                             </td>
                             <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#475569' : '#94a3b8', fontWeight: '500' }}>{lrv.status === 'in_service' ? lrv.seg_id : 'Sengkang Depot'}</td>
-                            <td style={{ padding: '12px 20px', color: lrv.status === 'in_service' ? '#0f172a' : '#94a3b8', fontFamily: 'monospace', fontWeight: '600' }}>
-                              {lrv.status === 'in_service' ? formatRunTime(lrv.run_time_minutes) : '--'}
-                            </td>
                             <td style={{ padding: '12px 20px', textAlign: 'right' }}>
                               <button 
                                 onClick={() => handleExamine(lrv.lrv_id)} 
