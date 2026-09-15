@@ -143,7 +143,7 @@ timestamped_events as (
 ),
 ordered_events as (
   select
-    event_grid.*,
+    timestamped_events.*,
     row_number() over (
       partition by lrv_id
       order by day_offset, loop_number, segment_order
