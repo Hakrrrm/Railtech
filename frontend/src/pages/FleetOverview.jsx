@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { loadFleetOverview } from '../lib/api'
-import { daysFromToday, forecastLabel, formatDate, formatKm, singaporeDate } from '../lib/format'
+import { cycleLabel, daysFromToday, forecastLabel, formatDate, formatDateTimeRange, formatDuration, formatKm, singaporeDate } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -46,6 +46,10 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
           </Card>
         </div>
 
+        {model.longStays.length > 0 && <Card title="Long depot commitments" eyebrow="Fleet withdrawals lasting 24 hours or more">
+          <div className="long-stay-list">{model.longStays.map((booking) => <article key={booking.id}><div><strong>{booking.lrv_id} · {cycleLabel(booking.primary_cycle)} package</strong><small>{booking.bundled_cycles.map(cycleLabel).join(' + ')} completed as the standard scope</small></div><div><b>{formatDuration((new Date(booking.end_at) - new Date(booking.start_at)) / 60000)}</b><small>{formatDateTimeRange(booking.start_at, booking.end_at)}</small></div><Badge value={booking.status}/></article>)}</div>
+        </Card>}
+
         <Card title="14-day maintenance outlook" eyebrow="Forecast dates · days are primary, kilometres are supporting detail">
           <div className="outlook">{model.outlook.map((day) => <div className="outlook-day" key={day.date} title={`${day.count} maintenance cycle${day.count === 1 ? '' : 's'}`}>
             <div className="bar-area"><span style={{ height: `${Math.max(4, day.count * 20)}%` }} className={day.count ? 'bar-active' : ''}/></div><b>{day.count || '·'}</b><small>{formatDate(day.date)}</small>
@@ -64,12 +68,14 @@ function buildModel(data) {
     if (!current || Number(cycle.priority_score) > Number(current.priority_score)) forecastsByVehicle.set(cycle.lrv_id, cycle)
   })
   const summaries = new Map(data.mileage.map((row) => [row.lrv_id, row]))
-  const combined = data.vehicles.map((vehicle) => ({ ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}) }))
+  const now = new Date()
+  const activeBookings = new Map(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => [booking.lrv_id, booking]))
+  const combined = data.vehicles.map((vehicle) => ({ ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id) }))
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
-  const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
+  const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || row.currentBooking || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
   const dueSoon = combined.filter((row) => row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7)
   const checks = combined.filter((row) => Number(row.telemetry_age_hours) > staleAfterHours || Math.abs(Number(row.divergence_km || 0)) >= 50).length
-  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours) })).sort((a, b) => Number(b.priority_score || 0) - Number(a.priority_score || 0)).slice(0, 8)
+  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.currentBooking ? 400 : 0) })).sort((a, b) => b.effectivePriority - a.effectivePriority).slice(0, 8)
   const leading = priority[0] || {}
   const next = leading.status === 'faulty'
     ? { status: 'faulty', title: `Replace ${leading.lrv_id} at the next handover`, description: leading.reason, reason: 'A controlled stock change keeps the service slot covered while the faulty LRV returns to depot.', button: 'Open deployment plan', destination: 'deployment' }
@@ -78,11 +84,13 @@ function buildModel(data) {
     const iso = singaporeDate(offset)
     return { date: iso, count: data.forecasts.filter((cycle) => cycle.forecast_date && daysFromToday(cycle.forecast_date) === offset).length }
   })
-  return { attention, dueSoon, checks, priority, next, outlook, spares: combined.filter((row) => row.status === 'idle').length }
+  const longStays = data.bookings.filter((booking) => new Date(booking.end_at) - new Date(booking.start_at) >= 86400000).sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
+  return { attention, dueSoon, checks, priority, next, outlook, longStays, spares: combined.filter((row) => row.status === 'idle' && !row.currentBooking).length }
 }
 
 function reasonFor(row, staleAfterHours) {
   if (row.status === 'faulty') return row.lrv_id === 'D29' ? 'Brake pressure fault · withdraw from service' : 'Fault reported · telemetry also stale'
+  if (row.currentBooking) return `${cycleLabel(row.currentBooking.primary_cycle)} package occupying ${row.currentBooking.bay_id}`
   if (Number(row.km_to_next) <= 0) return `${row.cycle_type / 1000}K cycle overdue`
   if (Math.abs(Number(row.divergence_km || 0)) >= 50) return 'Physical and device mileage need review'
   if (Number(row.telemetry_age_hours) > staleAfterHours) return 'Telemetry is stale'

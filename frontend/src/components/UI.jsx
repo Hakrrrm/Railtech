@@ -23,7 +23,7 @@ export function MetricCard({ label, value, detail, tone = 'neutral', icon = 'tra
 }
 
 export function Badge({ value, tone }) {
-  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
+  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', partially_completed: 'warning', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
   return <span className={`badge badge-${resolved}`}>{statusLabel(value)}</span>
 }
 

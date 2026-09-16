@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cycleLabel, forecastLabel, formatKm, qualityLabel, statusLabel } from './format'
+import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, statusLabel } from './format'
 
 describe('operator-facing formatting', () => {
   it('translates distances and cycles into scan-friendly labels', () => {
@@ -17,5 +17,12 @@ describe('operator-facing formatting', () => {
     expect(statusLabel('in_service')).toBe('In service')
     expect(qualityLabel(0.8).label).toBe('Strong')
     expect(qualityLabel(2.5).tone).toBe('danger')
+  })
+
+  it('renders LTA maintenance occupancy in operator-friendly units', () => {
+    expect(formatDuration(120)).toBe('2 hours')
+    expect(formatDuration(1440)).toBe('1 day')
+    expect(formatDuration(30240)).toBe('21 days')
+    expect(statusLabel('partially_completed')).toBe('Partially completed')
   })
 })

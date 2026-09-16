@@ -25,14 +25,16 @@ export async function loadFleetOverview() {
 
 export async function loadVehicleDetail(lrvId) {
   const db = client()
-  const [summary, forecasts, traversals, anchors, events] = await Promise.all([
+  const [summary, forecasts, traversals, anchors, events, bookings, rules] = await Promise.all([
     result(db.from('vehicle_mileage_summary').select('*').eq('lrv_id', lrvId).limit(1), 'Vehicle summary'),
     result(db.from('cycle_forecasts').select('*').eq('lrv_id', lrvId).order('cycle_type'), 'Maintenance cycles'),
     result(db.from('segment_traversals').select('*').eq('lrv_id', lrvId).order('ts', { ascending: false }).limit(5000), 'Segment activity'),
     result(db.from('mileage_anchors').select('*').eq('lrv_id', lrvId).order('ts', { ascending: false }).limit(30), 'Mileage evidence'),
     result(db.from('maintenance_events').select('*').eq('lrv_id', lrvId).order('completed_at', { ascending: false }).limit(30), 'Maintenance log'),
+    result(db.from('maintenance_bookings').select('*').eq('lrv_id', lrvId).order('start_at'), 'Depot visits'),
+    result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
   ])
-  return { summary: summary[0] || null, forecasts, traversals, anchors, events }
+  return { summary: summary[0] || null, forecasts, traversals, anchors, events, bookings, rules }
 }
 
 export async function loadMaintenancePlanning() {
@@ -63,12 +65,13 @@ export async function loadDeploymentPlanning() {
 
 export async function loadEvidence() {
   const db = client()
-  const [anchors, events, changes] = await Promise.all([
+  const [anchors, events, changes, rules] = await Promise.all([
     result(db.from('mileage_anchors').select('*').order('ts', { ascending: false }).limit(120), 'Mileage evidence'),
     result(db.from('maintenance_events').select('*').order('completed_at', { ascending: false }).limit(120), 'Maintenance evidence'),
     result(db.from('stock_changes').select('*').order('created_at', { ascending: false }).limit(120), 'Deployment evidence'),
+    result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
   ])
-  return { anchors, events, changes }
+  return { anchors, events, changes, rules }
 }
 
 export async function loadSettings() {
@@ -99,6 +102,7 @@ export async function completeMaintenance(input) {
     p_lrv_id: input.lrvId, p_primary_cycle: Number(input.primaryCycle),
     p_completion_mileage_km: Number(input.mileageKm), p_technician_id: input.technicianId || 'TECH_DEMO',
     p_booking_id: input.bookingId || null, p_notes: input.notes || null,
+    p_completed_cycles: input.completedCycles ? input.completedCycles.map(Number) : null,
   })
   if (error) throw new Error(error.message)
   return data

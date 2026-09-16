@@ -8,6 +8,7 @@ do $validation$
 declare
   actual_count integer;
   before_km numeric;
+  before_40_km numeric;
   rejected boolean;
 begin
   select count(*)
@@ -307,12 +308,39 @@ begin
     raise exception 'Expected five SPLRT maintenance cycle rules';
   end if;
 
+  if exists (
+    select 1
+    from (values
+      (2000, 120, array[2000]),
+      (13000, 240, array[2000,13000]),
+      (40000, 360, array[2000,13000,40000]),
+      (120000, 1440, array[2000,13000,40000,120000]),
+      (360000, 30240, array[2000,13000,40000,120000,360000])
+    ) as expected(cycle_type, duration_minutes, included_cycles)
+    left join maintenance_cycle_rules as rule
+      on rule.fleet = 'splrt' and rule.cycle_type = expected.cycle_type
+    where rule.duration_minutes is distinct from expected.duration_minutes
+       or rule.included_cycles is distinct from expected.included_cycles
+  ) then
+    raise exception 'LTA-confirmed package duration or included-cycle scope is incorrect';
+  end if;
+
   if (select count(*) from depot_bays where fleet = 'splrt' and active) <> 2 then
     raise exception 'Expected two active SPLRT depot bays';
   end if;
 
-  if (select count(*) from maintenance_bookings where demo_key like 'demo:%') <> 5 then
-    raise exception 'Expected five demo maintenance bookings';
+  if (select count(*) from maintenance_bookings where demo_key like 'demo:%') <> 6 then
+    raise exception 'Expected six demo maintenance bookings';
+  end if;
+
+  if not exists (
+    select 1 from maintenance_bookings
+    where demo_key = 'demo:booking:D22'
+      and primary_cycle = 360000
+      and bundled_cycles = array[2000,13000,40000,120000,360000]
+      and end_at - start_at = interval '21 days'
+  ) then
+    raise exception 'D22 three-week 360K occupancy scenario is missing';
   end if;
 
   if (select count(*) from maintenance_events where demo_key like 'demo:%') <> 30 then
@@ -392,7 +420,7 @@ begin
   rejected := false;
   begin
     perform schedule_maintenance('D08', 2000, array[2000], 'SPLRT-BAY-1',
-      current_date + time '09:15', current_date + time '10:15', 'confirmed', 'collision test');
+      current_date + time '09:15', current_date + time '11:15', 'confirmed', 'collision test');
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Overlapping bay booking was accepted'; end if;
@@ -400,7 +428,7 @@ begin
   rejected := false;
   begin
     perform schedule_maintenance('D07', 13000, array[2000,13000], 'SPLRT-BAY-2',
-      current_date + 1 + time '09:30', current_date + 1 + time '12:00', 'proposed', 'vehicle overlap test');
+      current_date + 1 + time '09:30', current_date + 1 + time '13:30', 'proposed', 'vehicle overlap test');
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'The same vehicle was booked into two bays at once'; end if;
@@ -426,19 +454,37 @@ begin
   rejected := false;
   begin
     perform schedule_maintenance('D25', 40000, array[2000,13000,40000], 'VALIDATION-BAY',
-      current_date + 6 + time '08:00', current_date + 6 + time '12:00', 'proposed', 'capability test');
+      current_date + 35 + time '08:00', current_date + 35 + time '14:00', 'proposed', 'capability test');
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Incompatible maintenance bay was accepted'; end if;
+
+  insert into duty_assignments (demo_key, lrv_id, loop_id, slot_label, duty_start, duty_end, status)
+  values ('validation:duty-conflict', 'D08', 'Validation Loop', 'Validation run',
+    current_date + 80 + time '10:00', current_date + 80 + time '12:00', 'planned');
+  rejected := false;
+  begin
+    perform schedule_maintenance('D08', 2000, array[2000], 'VALIDATION-BAY',
+      current_date + 80 + time '10:00', current_date + 80 + time '12:00', 'confirmed', 'duty conflict test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'A confirmed depot stay overlapping an operating duty was accepted'; end if;
 
   update planning_settings set minimum_service_vehicles = 22 where fleet = 'splrt';
   rejected := false;
   begin
     perform schedule_maintenance('D08', 2000, array[2000], 'SPLRT-BAY-1',
-      current_date + 6 + time '16:00', current_date + 6 + time '17:30', 'confirmed', 'coverage test');
+      current_date + 35 + time '16:00', current_date + 35 + time '18:00', 'confirmed', 'coverage test');
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Service-coverage floor was not enforced'; end if;
+
+  -- Multi-day visits are continuous bay occupancy; only their start and finish
+  -- need to fall inside the bay's staffed operating window.
+  perform schedule_maintenance('D08', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
+    current_date + 40 + time '08:00', current_date + 41 + time '08:00', 'proposed', '24-hour validation');
+  perform schedule_maintenance('D09', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2',
+    current_date + 50 + time '08:00', current_date + 71 + time '08:00', 'proposed', 'three-week validation');
 
   perform complete_maintenance(
     'D18', 2000,
@@ -480,6 +526,43 @@ begin
   ) <> 3 then
     raise exception '40K completion did not reset 2K, 13K, and 40K';
   end if;
+
+  -- Technicians can close a visit with a smaller actual scope, but the omitted
+  -- cycle must remain untouched and an explanatory note is mandatory.
+  insert into maintenance_bookings (
+    demo_key, lrv_id, primary_cycle, bundled_cycles, bay_id, start_at, end_at, status, notes
+  ) values (
+    'validation:partial-completion', 'D08', 40000, array[2000,13000,40000], 'SPLRT-BAY-2',
+    current_date - 1 + time '08:00', current_date - 1 + time '14:00', 'confirmed', 'validation visit'
+  );
+  select km_since into before_40_km from cycle_state where lrv_id = 'D08' and cycle_type = 40000;
+  perform complete_maintenance(
+    'D08', 40000,
+    (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D08'),
+    'VALIDATION',
+    (select id from maintenance_bookings where demo_key = 'validation:partial-completion'),
+    '40K work deferred after inspection', array[2000,13000]
+  );
+  if (select km_since from cycle_state where lrv_id = 'D08' and cycle_type = 40000) <> before_40_km
+     or exists (
+       select 1 from cycle_state where lrv_id = 'D08' and cycle_type in (2000,13000) and km_since <> 0
+     ) or not exists (
+       select 1 from maintenance_bookings
+       where demo_key = 'validation:partial-completion' and status = 'partially_completed'
+     ) then
+    raise exception 'Technician-recorded partial scope reset the wrong maintenance cycles';
+  end if;
+
+  rejected := false;
+  begin
+    perform complete_maintenance(
+      'D09', 40000,
+      (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D09'),
+      'VALIDATION', null, null, array[2000,13000]
+    );
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'A partial completion without a reason was accepted'; end if;
 
   perform confirm_stock_change(
     (select id from stock_changes where demo_key = 'demo:stock:D29:D27'),

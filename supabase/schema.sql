@@ -751,6 +751,39 @@ commit;
 begin;
 set local timezone to 'Asia/Singapore';
 
+-- LTA-confirmed standard package scope and continuous depot/bay occupancy.
+-- Durations are elapsed time, including weekends and waiting time.
+alter table maintenance_cycle_rules add column if not exists included_cycles integer[];
+update maintenance_cycle_rules
+set included_cycles = case cycle_type
+  when 2000 then array[2000]
+  when 13000 then array[2000,13000]
+  when 40000 then array[2000,13000,40000]
+  when 120000 then array[2000,13000,40000,120000]
+  when 360000 then array[2000,13000,40000,120000,360000]
+end
+where included_cycles is null;
+alter table maintenance_cycle_rules alter column included_cycles set not null;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'maintenance_cycle_rules_included_cycles'
+      and conrelid = 'maintenance_cycle_rules'::regclass
+  ) then
+    alter table maintenance_cycle_rules add constraint maintenance_cycle_rules_included_cycles check (
+      cardinality(included_cycles) > 0
+      and included_cycles <@ array[2000,13000,40000,120000,360000]
+      and included_cycles @> array[cycle_type]
+    ) not valid;
+  end if;
+end $$;
+
+alter table maintenance_bookings drop constraint if exists maintenance_bookings_status_check;
+alter table maintenance_bookings add constraint maintenance_bookings_status_check
+  check (status in ('proposed', 'confirmed', 'completed', 'partially_completed', 'cancelled'));
+
 -- Protect all new writes even when an older database contains rows that have
 -- not yet been cleaned up. NOT VALID avoids blocking the upgrade on legacy
 -- data; Supabase still enforces each constraint for every new/changed row.
@@ -1038,8 +1071,8 @@ begin
     raise exception 'Booking is shorter than the configured % minute duration', v_rule.duration_minutes;
   end if;
 
-  select array_agg(cycle_type order by cycle_type) into v_expected_cycles
-  from maintenance_cycle_rules where fleet = v_fleet and cycle_type <= p_primary_cycle;
+  select array_agg(distinct cycle order by cycle) into v_expected_cycles
+  from unnest(v_rule.included_cycles) as standard(cycle);
   select array_agg(distinct cycle order by cycle) into v_requested_cycles
   from unnest(coalesce(p_bundled_cycles, '{}'::integer[])) as requested(cycle);
   if v_requested_cycles is distinct from v_expected_cycles then
@@ -1049,8 +1082,9 @@ begin
   select * into v_settings from planning_settings where fleet = v_fleet;
   v_local_start := p_start_at at time zone coalesce(v_settings.operating_timezone, 'Asia/Singapore');
   v_local_end := p_end_at at time zone coalesce(v_settings.operating_timezone, 'Asia/Singapore');
-  if v_local_start::date <> v_local_end::date or v_local_start::time < v_bay.opens_at or v_local_end::time > v_bay.closes_at then
-    raise exception 'Booking falls outside bay operating hours';
+  if v_local_start::time < v_bay.opens_at or v_local_start::time > v_bay.closes_at
+     or v_local_end::time < v_bay.opens_at or v_local_end::time > v_bay.closes_at then
+    raise exception 'Booking must start and finish within bay operating hours';
   end if;
 
   if p_booking_id is not null then
@@ -1069,13 +1103,38 @@ begin
       and tstzrange(start_at, end_at, '[)') && tstzrange(p_start_at, p_end_at, '[)')
   ) then raise exception 'Vehicle % already has a booking in this period', p_lrv_id; end if;
 
+  if p_status = 'confirmed' and exists (
+    select 1 from duty_assignments
+    where lrv_id = p_lrv_id and status in ('planned', 'active')
+      and tstzrange(duty_start, duty_end, '[)') && tstzrange(p_start_at, p_end_at, '[)')
+  ) then raise exception 'Vehicle % has an operating duty in this period', p_lrv_id; end if;
+
   if p_status = 'confirmed' then
     select count(*) into v_serviceable from vehicles where fleet = v_fleet and status = 'in_service';
-    select count(distinct booking.lrv_id) into v_concurrent
-    from maintenance_bookings as booking join vehicles as vehicle on vehicle.lrv_id = booking.lrv_id
-    where vehicle.fleet = v_fleet and vehicle.status = 'in_service' and booking.status = 'confirmed'
-      and booking.id is distinct from p_booking_id
-      and tstzrange(booking.start_at, booking.end_at, '[)') && tstzrange(p_start_at, p_end_at, '[)');
+    select coalesce(max(concurrent_bookings), 0) into v_concurrent
+    from (
+      select count(distinct vehicle.lrv_id) as concurrent_bookings
+      from (
+        select p_start_at as boundary
+        union
+        select candidate.start_at
+        from maintenance_bookings as candidate
+        where candidate.status = 'confirmed'
+          and candidate.id is distinct from p_booking_id
+          and tstzrange(candidate.start_at, candidate.end_at, '[)')
+              && tstzrange(p_start_at, p_end_at, '[)')
+      ) as boundaries
+      left join maintenance_bookings as booking
+        on booking.status = 'confirmed'
+       and booking.id is distinct from p_booking_id
+       and booking.start_at <= boundaries.boundary
+       and booking.end_at > boundaries.boundary
+      left join vehicles as vehicle
+        on vehicle.lrv_id = booking.lrv_id
+       and vehicle.fleet = v_fleet
+       and vehicle.status = 'in_service'
+      group by boundaries.boundary
+    ) as concurrency;
     if v_serviceable - v_concurrent - (case when v_vehicle_status = 'in_service' then 1 else 0 end)
        < coalesce(v_settings.minimum_service_vehicles, 0) then
       raise exception 'Booking would reduce the operating fleet below its service minimum';
@@ -1107,14 +1166,17 @@ begin
 end;
 $$;
 
+drop function if exists complete_maintenance(text, integer, numeric, text, uuid, text);
+
 create or replace function complete_maintenance(
   p_lrv_id text, p_primary_cycle integer, p_completion_mileage_km numeric,
-  p_technician_id text, p_booking_id uuid default null, p_notes text default null
+  p_technician_id text, p_booking_id uuid default null, p_notes text default null,
+  p_completed_cycles integer[] default null
 )
 returns uuid language plpgsql security definer set search_path = public
 as $$
 declare
-  v_event_id uuid; v_reset_cycles integer[]; v_device_odo numeric;
+  v_event_id uuid; v_expected_cycles integer[]; v_completed_cycles integer[]; v_device_odo numeric;
   v_last_anchor numeric; v_divergence numeric; v_booking maintenance_bookings%rowtype;
 begin
   if p_primary_cycle not in (2000, 13000, 40000, 120000, 360000) then raise exception 'Unsupported maintenance cycle'; end if;
@@ -1131,6 +1193,28 @@ begin
       raise exception 'Booking does not match this vehicle and maintenance cycle';
     end if;
     if v_booking.status <> 'confirmed' then raise exception 'Only a confirmed booking can be completed'; end if;
+    if now() < v_booking.start_at then raise exception 'A maintenance visit cannot be completed before it starts'; end if;
+    v_expected_cycles := v_booking.bundled_cycles;
+  else
+    select included_cycles into v_expected_cycles
+    from maintenance_cycle_rules as rule
+    join vehicles as vehicle on vehicle.fleet = rule.fleet
+    where vehicle.lrv_id = p_lrv_id and rule.cycle_type = p_primary_cycle;
+  end if;
+
+  select array_agg(distinct cycle order by cycle) into v_expected_cycles
+  from unnest(v_expected_cycles) as planned(cycle);
+
+  select array_agg(distinct cycle order by cycle) into v_completed_cycles
+  from unnest(coalesce(p_completed_cycles, v_expected_cycles)) as completed(cycle);
+  if v_completed_cycles is null or cardinality(v_completed_cycles) = 0 then
+    raise exception 'At least one completed maintenance cycle is required';
+  end if;
+  if not (v_completed_cycles <@ v_expected_cycles) then
+    raise exception 'Completed cycles % are outside the planned package %', v_completed_cycles, v_expected_cycles;
+  end if;
+  if v_completed_cycles is distinct from v_expected_cycles and nullif(btrim(p_notes), '') is null then
+    raise exception 'A reason is required when the completed scope differs from the planned package';
   end if;
 
   select value_km into v_last_anchor from mileage_anchors
@@ -1138,11 +1222,11 @@ begin
   if v_last_anchor is not null and p_completion_mileage_km < v_last_anchor then
     raise exception 'Completion mileage cannot be below the latest accepted physical reading (%)', v_last_anchor;
   end if;
-  perform 1 from cycle_state where lrv_id = p_lrv_id and cycle_type <= p_primary_cycle for update;
-  select array_agg(cycle_type order by cycle_type) into v_reset_cycles
-  from cycle_state where lrv_id = p_lrv_id and cycle_type <= p_primary_cycle;
-  if v_reset_cycles is null or not (v_reset_cycles @> array[p_primary_cycle]) then
-    raise exception 'Vehicle cycle state is incomplete for the % km completion', p_primary_cycle;
+  perform 1 from cycle_state
+  where lrv_id = p_lrv_id and cycle_type = any(v_completed_cycles) for update;
+  if (select count(*) from cycle_state
+      where lrv_id = p_lrv_id and cycle_type = any(v_completed_cycles)) <> cardinality(v_completed_cycles) then
+    raise exception 'Vehicle cycle state is incomplete for completed scope %', v_completed_cycles;
   end if;
   select odo_km into v_device_odo from segment_traversals
   where lrv_id = p_lrv_id and ts <= now() + interval '10 minutes' order by ts desc, id desc limit 1;
@@ -1150,7 +1234,7 @@ begin
 
   insert into maintenance_events (booking_id, lrv_id, completion_mileage_km, primary_cycle, reset_cycles,
     technician_id, source, completed_at, notes)
-  values (p_booking_id, p_lrv_id, p_completion_mileage_km, p_primary_cycle, v_reset_cycles,
+  values (p_booking_id, p_lrv_id, p_completion_mileage_km, p_primary_cycle, v_completed_cycles,
     btrim(p_technician_id), 'dashboard', now(), p_notes) returning id into v_event_id;
   insert into mileage_anchors (lrv_id, ts, technician_id, source, value_km, override, override_reason,
     gnss_odo_km, divergence_km)
@@ -1159,9 +1243,12 @@ begin
     case when abs(coalesce(v_divergence, 0)) >= 50 then 'Physical/device divergence requires evidence review' end,
     v_device_odo, v_divergence);
   update cycle_state set km_since = 0, km_to_next = cycle_type, due_date = null
-  where lrv_id = p_lrv_id and cycle_type = any(v_reset_cycles);
+  where lrv_id = p_lrv_id and cycle_type = any(v_completed_cycles);
   if p_booking_id is not null then
-    update maintenance_bookings set status = 'completed', updated_at = now() where id = p_booking_id;
+    update maintenance_bookings
+    set status = case when v_completed_cycles = v_expected_cycles then 'completed' else 'partially_completed' end,
+        updated_at = now()
+    where id = p_booking_id;
   end if;
   update vehicles set status = 'idle' where lrv_id = p_lrv_id;
   return v_event_id;
@@ -1257,15 +1344,19 @@ drop policy if exists "demo update bays" on depot_bays;
 create policy "demo update bays" on depot_bays for update to anon, authenticated using (true) with check (true);
 drop policy if exists "demo create stock changes" on stock_changes;
 
+revoke update on maintenance_cycle_rules from anon, authenticated;
+grant update (tolerance_km, duration_minutes, compatible_bay_type, updated_at)
+  on maintenance_cycle_rules to anon, authenticated;
+
 revoke execute on function increment_cycle_state_from_traversal() from public;
 revoke execute on function validate_traversal_ordering() from public;
 revoke execute on function schedule_maintenance(text, integer, integer[], text, timestamptz, timestamptz, text, text, uuid) from public;
-revoke execute on function complete_maintenance(text, integer, numeric, text, uuid, text) from public;
+revoke execute on function complete_maintenance(text, integer, numeric, text, uuid, text, integer[]) from public;
 revoke execute on function cancel_maintenance_booking(uuid, text) from public;
 revoke execute on function confirm_stock_change(uuid, text) from public;
 revoke execute on function select_stock_replacement(uuid, text) from public;
 grant execute on function schedule_maintenance(text, integer, integer[], text, timestamptz, timestamptz, text, text, uuid) to anon, authenticated;
-grant execute on function complete_maintenance(text, integer, numeric, text, uuid, text) to anon, authenticated;
+grant execute on function complete_maintenance(text, integer, numeric, text, uuid, text, integer[]) to anon, authenticated;
 grant execute on function cancel_maintenance_booking(uuid, text) to anon, authenticated;
 grant execute on function confirm_stock_change(uuid, text) to anon, authenticated;
 grant execute on function select_stock_replacement(uuid, text) to anon, authenticated;

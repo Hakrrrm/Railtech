@@ -253,7 +253,11 @@ now, but worth knowing if you ever add a stricter command later).
 2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
    `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
    function check inside a transaction and rolls it back, so seeded records are
-   unchanged. For a hardware-only project, copy `supabase/seed.example.sql` and
+   unchanged. The showcase uses the LTA-confirmed continuous depot/bay stays:
+   2K = 2 hours, 13K = 4 hours, 40K = 6 hours, 120K = 24 hours and 360K =
+   21 elapsed days. Higher packages include every lower cycle; technicians
+   record the actual completed scope and only those cycles reset. For a
+   hardware-only project, copy `supabase/seed.example.sql` and
    adjust `lrv_id` values to match your
    devices' `config.h` `MQTT_LRV_ID`/`MQTT_FLEET`, run it -- the FK on
    `segment_traversals` rejects events for any vehicle not seeded here

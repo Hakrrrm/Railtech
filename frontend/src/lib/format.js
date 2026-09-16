@@ -42,6 +42,25 @@ export function formatTime(value) {
   }).format(new Date(value))
 }
 
+export function formatDuration(minutes) {
+  const value = Number(minutes)
+  if (!Number.isFinite(value) || value < 0) return '—'
+  if (value >= 1440 && value % 1440 === 0) {
+    const days = value / 1440
+    return `${days} day${days === 1 ? '' : 's'}`
+  }
+  if (value >= 60 && value % 60 === 0) {
+    const hours = value / 60
+    return `${hours} hour${hours === 1 ? '' : 's'}`
+  }
+  return `${value} min`
+}
+
+export function formatDateTimeRange(start, end) {
+  if (!start || !end) return '—'
+  return `${formatDateTime(start)} – ${formatDateTime(end)}`
+}
+
 export function singaporeDate(offset = 0) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: SINGAPORE_TIMEZONE,
@@ -73,7 +92,7 @@ export function forecastLabel(days) {
 export function statusLabel(status) {
   return {
     in_service: 'In service', maintenance: 'Maintenance', idle: 'Idle reserve', faulty: 'Faulty',
-    proposed: 'Proposed', confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled',
+    proposed: 'Proposed', confirmed: 'Confirmed', completed: 'Completed', partially_completed: 'Partially completed', cancelled: 'Cancelled',
     active: 'Active', withdrawn: 'Withdrawn', planned: 'Planned',
   }[status] || status || 'Unknown'
 }

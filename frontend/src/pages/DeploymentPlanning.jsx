@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { confirmStockChange, loadDeploymentPlanning, selectStockReplacement } from '../lib/api'
-import { formatKm, formatTime, statusLabel } from '../lib/format'
+import { cycleLabel, formatDate, formatDuration, formatKm, formatTime, statusLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -57,8 +57,8 @@ export function DeploymentPlanning({ navigate, reportUpdatedAt }) {
         </div>
 
         <Card title="Replacement alternatives" eyebrow="Ranked by serviceability, booking conflicts, maintenance margin and wear balance" action={<button className="text-button" onClick={() => navigate('maintenance')}>View depot bookings <Icon name="chevron"/></button>}>
-          <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Vehicle</th><th>Availability</th><th>Maintenance margin</th><th>Rolling use</th><th>After projected duty</th><th/></tr></thead><tbody>
-            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{item.lrv_id}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={availabilityLabel(item)} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{formatKm(item.rolling_daily_rate_km)}/day</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
+          <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Vehicle</th><th>Availability</th><th>Maintenance margin</th><th>Next depot commitment</th><th>After projected duty</th><th/></tr></thead><tbody>
+            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{item.lrv_id}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={availabilityLabel(item)} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{item.nextBooking ? <><strong>{formatDate(item.nextBooking.start_at)} · {cycleLabel(item.nextBooking.primary_cycle)}</strong><small>{formatDuration((new Date(item.nextBooking.end_at) - new Date(item.nextBooking.start_at)) / 60000)}</small></> : 'None planned'}</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
           </tbody></table></div>
         </Card>
       </>}
@@ -71,14 +71,18 @@ function buildDeploymentModel(data) {
   if (!data) return null
   const activeAssignments = data.assignments.filter((row) => ['planned', 'active'].includes(row.status))
   const vehicleStatus = new Map(data.vehicles.map((row) => [row.lrv_id, row.status]))
+  const nextBooking = new Map()
+  data.bookings.forEach((booking) => { const current = nextBooking.get(booking.lrv_id); if (!current || new Date(booking.start_at) < new Date(current.start_at)) nextBooking.set(booking.lrv_id, booking) })
   const now = new Date(); const windowStart = now; const windowEnd = new Date(now.getTime() + 5 * 3600000)
+  const activeDepotVehicles = new Set(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => booking.lrv_id))
+  data.vehicles.filter((row) => row.status === 'maintenance').forEach((row) => activeDepotVehicles.add(row.lrv_id))
   return {
     assigned: activeAssignments.filter((row) => vehicleStatus.get(row.lrv_id) === 'in_service').length,
-    reserve: data.vehicles.filter((row) => row.status === 'idle').length,
-    depot: data.vehicles.filter((row) => row.status === 'maintenance').length,
+    reserve: data.vehicles.filter((row) => row.status === 'idle' && !activeDepotVehicles.has(row.lrv_id)).length,
+    depot: activeDepotVehicles.size,
     withdrawn: data.vehicles.filter((row) => row.status === 'faulty').length,
     assignments: activeAssignments.map((row) => ({ ...row, vehicleStatus: vehicleStatus.get(row.lrv_id) })).sort((a, b) => Number(b.vehicleStatus === 'faulty') - Number(a.vehicleStatus === 'faulty') || a.lrv_id.localeCompare(b.lrv_id)),
-    alternatives: [...data.eligibility].sort((a, b) => Number(b.eligible) - Number(a.eligible) || Number(b.free_of_booking) - Number(a.free_of_booking) || Number(b.free_of_duty) - Number(a.free_of_duty) || Number(b.available_duty_margin_km) - Number(a.available_duty_margin_km) || Number(a.rolling_daily_rate_km) - Number(b.rolling_daily_rate_km)),
+    alternatives: data.eligibility.map((item) => ({ ...item, nextBooking: nextBooking.get(item.lrv_id) })).sort((a, b) => Number(b.eligible) - Number(a.eligible) || Number(b.free_of_booking) - Number(a.free_of_booking) || Number(b.free_of_duty) - Number(a.free_of_duty) || Number(b.available_duty_margin_km) - Number(a.available_duty_margin_km) || Number(a.rolling_daily_rate_km) - Number(b.rolling_daily_rate_km)),
     proposal: data.changes.find((row) => row.decision_status === 'proposed') || null,
     hours: Array.from({ length: 6 }, (_, index) => new Date(windowStart.getTime() + index * 3600000)), windowStart, windowEnd,
   }

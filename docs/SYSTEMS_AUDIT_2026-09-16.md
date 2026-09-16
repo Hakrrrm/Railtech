@@ -47,6 +47,10 @@ run, in order:
   service coverage, replacement eligibility and stock-change atomicity passed.
 - Anonymous reads and approved RPCs passed under RLS; direct anonymous depot-bay
   deletion was rejected.
+- LTA-confirmed package rules are encoded as continuous bay occupancy: 2K is
+  2 hours, 13K is 4 hours, 40K is 6 hours, 120K is 24 hours and 360K is 21
+  elapsed days including weekends and waiting time. Every higher package
+  includes all lower cycles.
 
 ## Level 2 — simulated live run
 
@@ -111,6 +115,11 @@ Remaining field gates:
 - Made booking completion one-time and, when a booking ID is supplied, required
   a matching confirmed booking, rejected physical-mileage regression and
   recorded high divergence for review.
+- Separated planned package scope from technician-confirmed work. A reduced
+  completion resets only the selected cycles, is marked partially completed and
+  requires an explanation.
+- Added cross-day continuous bay occupation, accurate long-window concurrency
+  checks and rejection of confirmed depot stays that overlap operating duties.
 - Added booking cancellation through a validating RPC.
 - Excluded already-assigned LRVs from replacement recommendations and checked
   the exact replacement duty against bookings, duties and maintenance margin.
@@ -130,7 +139,7 @@ Remaining field gates:
 | --- | --- | --- |
 | Automated, timely mileage capture | Strong prototype | Segment completion updates planning mileage and all five PM cycles automatically. Field reliability still needs SD replay. |
 | Central visibility and usable UI | Strong | Fleet, vehicle, maintenance, deployment and audit views convert distance into forecast days and ranked actions. |
-| Effective maintenance planning | Strong demo, unmeasured operations | Forecast queue, nested resets, bundling, bay constraints and service floor are implemented. Real depot durations and staffing rules need owner validation. |
+| Effective maintenance planning | Strong demo, unmeasured operations | Forecast queue, LTA-confirmed nested packages and durations, continuous bay occupancy and service-floor protection are implemented. Actual bay count and staffing rules still need owner validation. |
 | Service-preserving deployment | Strong demo | D29 withdrawal and D27/D28 reserve ranking show an atomic stock change with duty and mileage-margin checks. Live duty feeds are still synthetic. |
 | Innovation | Good | Reconciled physical/device mileage, evidence retention, forecast-based recall and maintenance-aware stock selection form one decision loop. OCR remains deferred. |
 | Feasibility and low disruption | Good prototype | Existing vehicle packets feed an additive cloud model without changing the dashboard contract. Authentication, secure broker operation and field commissioning remain before deployment. |
@@ -140,9 +149,9 @@ Remaining field gates:
 The strongest judging story is the closed loop: capture completed segments,
 reconcile them with definite physical readings, express maintenance risk in days,
 reserve compatible capacity, and choose a replacement that preserves both
-service and maintenance margin. The presentation should label depot capacity,
-duty distance and task duration as synthetic assumptions until operator-owned
-values replace them.
+service and maintenance margin. The presentation should label depot capacity
+and duty distance as synthetic assumptions. Package duration and nesting are
+now based on LTA clarification.
 
 ## Verification evidence
 

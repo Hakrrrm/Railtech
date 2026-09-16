@@ -331,6 +331,7 @@ insert into _demo_cycle_override (
   ('D18',   2000,   2060,  -60, -3),
   ('D21',   2000,    520, 1480, 10),
   ('D21',  13000,  12680,  320,  2),
+  ('D22', 360000, 359500,  500,  6),
   ('D23',   2000,     50, 1950,  5),
   ('D23',  40000,  39580,  420,  1),
   ('D24',  13000,  13020,  -20, -1),
@@ -414,18 +415,19 @@ on conflict (fleet) do update set
 
 insert into maintenance_cycle_rules (
   fleet, cycle_type, threshold_km, tolerance_km, duration_minutes,
-  compatible_bay_type
+  compatible_bay_type, included_cycles
 ) values
-  ('splrt',   2000,   2000, 120,  90, 'universal'),
-  ('splrt',  13000,  13000, 350, 150, 'universal'),
-  ('splrt',  40000,  40000, 600, 240, 'heavy'),
-  ('splrt', 120000, 120000, 900, 420, 'heavy'),
-  ('splrt', 360000, 360000, 1500, 720, 'heavy')
+  ('splrt',   2000,   2000, 120,   120, 'universal', array[2000]),
+  ('splrt',  13000,  13000, 350,   240, 'universal', array[2000,13000]),
+  ('splrt',  40000,  40000, 600,   360, 'heavy', array[2000,13000,40000]),
+  ('splrt', 120000, 120000, 900,  1440, 'heavy', array[2000,13000,40000,120000]),
+  ('splrt', 360000, 360000, 1500, 30240, 'heavy', array[2000,13000,40000,120000,360000])
 on conflict (fleet, cycle_type) do update set
   threshold_km = excluded.threshold_km,
   tolerance_km = excluded.tolerance_km,
   duration_minutes = excluded.duration_minutes,
   compatible_bay_type = excluded.compatible_bay_type,
+  included_cycles = excluded.included_cycles,
   updated_at = now();
 
 insert into depot_bays (
@@ -451,20 +453,23 @@ insert into maintenance_bookings (
   start_at, end_at, status, notes
 ) values
   ('demo:booking:D18', 'D18', 2000, array[2000], 'SPLRT-BAY-1',
-    current_date + time '09:00', current_date + time '10:30', 'confirmed',
+    current_date + time '09:00', current_date + time '11:00', 'confirmed',
     'Overdue 2K recall; vehicle already in depot'),
   ('demo:booking:D07', 'D07', 13000, array[2000,13000], 'SPLRT-BAY-1',
-    current_date + 1 + time '09:00', current_date + 1 + time '11:30', 'proposed',
+    current_date + 1 + time '09:00', current_date + 1 + time '13:00', 'proposed',
     'Bundle the 2K and 13K cycles in one visit'),
   ('demo:booking:D24', 'D24', 13000, array[2000,13000], 'SPLRT-BAY-1',
-    current_date + 2 + time '13:00', current_date + 2 + time '15:30', 'confirmed',
+    current_date + 2 + time '13:00', current_date + 2 + time '17:00', 'confirmed',
     'Routine planned maintenance'),
   ('demo:booking:D25', 'D25', 40000, array[2000,13000,40000], 'SPLRT-BAY-2',
-    current_date + 3 + time '08:00', current_date + 3 + time '12:00', 'confirmed',
+    current_date + 3 + time '08:00', current_date + 3 + time '14:00', 'confirmed',
     '40K package with nested-cycle completion'),
   ('demo:booking:D26', 'D26', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
-    current_date + 4 + time '08:00', current_date + 4 + time '15:00', 'proposed',
-    'Major planned inspection');
+    current_date + 4 + time '08:00', current_date + 5 + time '08:00', 'proposed',
+    '24-hour package with continuous bay occupation'),
+  ('demo:booking:D22', 'D22', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2',
+    current_date + 6 + time '08:00', current_date + 27 + time '08:00', 'proposed',
+    'Three-week package including weekends and waiting time');
 
 insert into maintenance_events (
   demo_key, lrv_id, completion_mileage_km, primary_cycle, reset_cycles,

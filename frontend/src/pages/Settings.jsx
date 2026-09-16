@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { loadSettings, saveBay, saveCycleRule, savePlanningSettings } from '../lib/api'
-import { cycleLabel } from '../lib/format'
+import { cycleLabel, formatDuration } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Card, DataBoundary, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -46,8 +46,8 @@ function SettingsForm({ initial, refresh }) {
             <label className="form-span">Operating timezone<input value={draft.settings.operating_timezone} disabled/><small>Daily mileage and schedule dates use Singapore time.</small></label>
           </div>
         </Card>
-        <Card title="Maintenance cycle rules" eyebrow="Tolerance and expected task duration">
-          <div className="settings-list">{draft.rules.map((rule, index) => <div className="settings-row" key={rule.cycle_type}><strong>{cycleLabel(rule.cycle_type)}</strong><label>Tolerance (km)<input type="number" min="0" value={rule.tolerance_km} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'tolerance_km', e.target.value)}/></label><label>Duration (min)<input type="number" min="30" step="30" value={rule.duration_minutes} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'duration_minutes', e.target.value)}/></label><label>Bay type<select value={rule.compatible_bay_type} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'compatible_bay_type', e.target.value)}><option value="universal">Universal</option><option value="heavy">Heavy</option></select></label></div>)}</div>
+        <Card title="Maintenance cycle rules" eyebrow="LTA-confirmed package scope and continuous bay occupancy">
+          <div className="settings-list">{draft.rules.map((rule, index) => { const duration = editableDuration(rule.duration_minutes); return <div className="settings-row" key={rule.cycle_type}><strong>{cycleLabel(rule.cycle_type)}<small>{(rule.included_cycles || [rule.cycle_type]).map(cycleLabel).join(' + ')}</small></strong><label>Tolerance (km)<input type="number" min="0" value={rule.tolerance_km} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'tolerance_km', e.target.value)}/></label><label>Depot/bay stay ({duration.unit})<input type="number" min="0.5" step="0.5" value={duration.value} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'duration_minutes', Number(e.target.value) * duration.multiplier)}/><small>{formatDuration(rule.duration_minutes)} elapsed</small></label><label>Bay type<select value={rule.compatible_bay_type} onChange={(e) => updateList(setDraft, draft, 'rules', index, 'compatible_bay_type', e.target.value)}><option value="universal">Universal</option><option value="heavy">Heavy</option></select></label></div> })}</div>
         </Card>
         <Card title="Depot bays & hours" eyebrow="Scheduling capacity">
           <div className="settings-list">{draft.bays.map((bay, index) => <div className="settings-row bay-settings" key={bay.bay_id}><strong>{bay.name}</strong><label>Opens<input type="time" value={bay.opens_at.slice(0, 5)} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'opens_at', e.target.value)}/></label><label>Closes<input type="time" value={bay.closes_at.slice(0, 5)} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'closes_at', e.target.value)}/></label><label>Capability<select value={bay.bay_type} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'bay_type', e.target.value)}><option value="universal">Universal</option><option value="heavy">Heavy</option></select></label><label className="toggle"><input type="checkbox" checked={bay.active} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'active', e.target.checked)}/><span/>Active</label></div>)}</div>
@@ -61,6 +61,13 @@ function SettingsForm({ initial, refresh }) {
 function updateList(setDraft, draft, key, index, field, value) {
   const rows = draft[key].map((row, rowIndex) => rowIndex === index ? { ...row, [field]: value } : row)
   setDraft({ ...draft, [key]: rows })
+}
+
+function editableDuration(minutes) {
+  const value = Number(minutes)
+  return value >= 1440
+    ? { value: value / 1440, multiplier: 1440, unit: 'days' }
+    : { value: value / 60, multiplier: 60, unit: 'hours' }
 }
 
 function BadgeLike() { return <span className="badge badge-muted">Planned for a later phase</span> }
