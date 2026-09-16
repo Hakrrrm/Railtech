@@ -15,7 +15,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
   const state = useSupabaseData(loadFleetOverview, [], subscriptions)
   const [priorityFilter, setPriorityFilter] = useState('all')
   const model = useMemo(() => buildModel(state.data), [state.data])
-  const visiblePriority = useMemo(() => model?.priority.filter((item) => priorityFilter === 'all' || item.priorityCategory === priorityFilter) || [], [model, priorityFilter])
+  const visiblePriority = useMemo(() => model?.priority.filter((item) => matchesPriorityFilter(item, priorityFilter)) || [], [model, priorityFilter])
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   return <div className="fleet-page">
@@ -24,7 +24,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
       {model && <>
         <div className="metric-grid metric-grid-three">
           <MetricCard label="Maintenance attention" value={model.attention.length} detail="Due now, due soon or fault repair" tone="danger" icon="alert"/>
-          <MetricCard label="Due in next 7 days" value={model.dueSoon.length} detail="Upcoming recalls, excluding today" tone="warning" icon="clock"/>
+          <MetricCard label="Due within 7 days" value={model.dueSoon.length} detail="Includes vehicles due today" tone="warning" icon="clock"/>
           <MetricCard label="Spares on reserve" value={model.spares} detail="Idle, serviceable and unbooked" tone="info" icon="train"/>
         </div>
 
@@ -33,7 +33,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
             <option value="all">All priorities ({model.priority.length})</option>
             <option value="today">Due today ({model.priorityCounts.today})</option>
             <option value="fault">Fault repair ({model.priorityCounts.fault})</option>
-            <option value="week">Due in next 7 days ({model.priorityCounts.week})</option>
+            <option value="week">Due within 7 days ({model.priorityCounts.week})</option>
           </select>}>
             <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Next maintenance cycle</th><th>Km to maintenance</th><th>Priority</th><th aria-label="Open"/></tr></thead>
               <tbody>{visiblePriority.map((item) => <tr key={item.lrv_id}>
@@ -89,11 +89,11 @@ function buildModel(data) {
     .filter((row) => row.priorityCategory)
     .sort((a, b) => b.effectivePriority - a.effectivePriority)
   const attention = priority
-  const dueSoon = priority.filter((row) => row.priorityCategory === 'week')
+  const dueSoon = priority.filter((row) => ['today', 'week'].includes(row.priorityCategory))
   const priorityCounts = {
     today: priority.filter((row) => row.priorityCategory === 'today').length,
     fault: priority.filter((row) => row.priorityCategory === 'fault').length,
-    week: priority.filter((row) => row.priorityCategory === 'week').length,
+    week: dueSoon.length,
   }
   const leading = priority[0] || {}
   const next = leading.status === 'faulty'
@@ -119,6 +119,12 @@ function priorityCategory(row) {
   if (days <= 0) return 'today'
   if (days <= 7) return 'week'
   return null
+}
+
+function matchesPriorityFilter(row, filter) {
+  if (filter === 'all') return true
+  if (filter === 'week') return ['today', 'week'].includes(row.priorityCategory)
+  return row.priorityCategory === filter
 }
 
 function weekday(value) {
