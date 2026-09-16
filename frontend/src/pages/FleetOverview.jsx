@@ -24,7 +24,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
       {model && <>
         <div className="metric-grid metric-grid-three">
           <MetricCard label="Maintenance attention" value={model.attention.length} detail="Due now, due soon or fault repair" tone="danger" icon="alert"/>
-          <MetricCard label="Due within 7 days" value={model.dueSoon.length} detail="Due today and upcoming recalls" tone="warning" icon="clock"/>
+          <MetricCard label="Due in next 7 days" value={model.dueSoon.length} detail="Upcoming recalls, excluding today" tone="warning" icon="clock"/>
           <MetricCard label="Spares on reserve" value={model.spares} detail="Idle, serviceable and unbooked" tone="info" icon="train"/>
         </div>
 
@@ -89,7 +89,7 @@ function buildModel(data) {
     .filter((row) => row.priorityCategory)
     .sort((a, b) => b.effectivePriority - a.effectivePriority)
   const attention = priority
-  const dueSoon = priority.filter((row) => ['today', 'week'].includes(row.priorityCategory))
+  const dueSoon = priority.filter((row) => row.priorityCategory === 'week')
   const priorityCounts = {
     today: priority.filter((row) => row.priorityCategory === 'today').length,
     fault: priority.filter((row) => row.priorityCategory === 'fault').length,
