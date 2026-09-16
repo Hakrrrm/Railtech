@@ -32,8 +32,8 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
           <Card title="Priority vehicles" className="priority-card" action={<select className="priority-filter" aria-label="Filter priority vehicles" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
             <option value="all">All priorities ({model.priority.length})</option>
             <option value="today">Due today ({model.priorityCounts.today})</option>
-            <option value="fault">Fault repair ({model.priorityCounts.fault})</option>
             <option value="week">Due within 7 days ({model.priorityCounts.week})</option>
+            <option value="fault">Fault repair ({model.priorityCounts.fault})</option>
           </select>}>
             <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Next maintenance cycle</th><th>Km to maintenance</th><th>Priority</th><th aria-label="Open"/></tr></thead>
               <tbody>{visiblePriority.map((item) => <tr key={item.lrv_id}>
