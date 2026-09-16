@@ -7,18 +7,18 @@ import { Icon } from '../components/Icons'
 
 const subscriptions = [{ table: 'planning_settings' }, { table: 'maintenance_cycle_rules' }, { table: 'depot_bays' }]
 
-export function Settings({ reportUpdatedAt }) {
+export function Settings({ navigate, reportUpdatedAt }) {
   const state = useSupabaseData(loadSettings, [], subscriptions)
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   return <>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.settings} onRetry={state.refresh}>
-      {state.data && <SettingsForm key={state.updatedAt?.getTime()} initial={state.data} refresh={state.refresh}/>}
+      {state.data && <SettingsForm key={state.updatedAt?.getTime()} initial={state.data} refresh={state.refresh} navigate={navigate}/>}
     </DataBoundary>
   </>
 }
 
-function SettingsForm({ initial, refresh }) {
+function SettingsForm({ initial, refresh, navigate }) {
   const [draft, setDraft] = useState(() => structuredClone(initial))
   const [toast, setToast] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -52,7 +52,7 @@ function SettingsForm({ initial, refresh }) {
         <Card title="Depot bays & hours" eyebrow="Scheduling capacity">
           <div className="settings-list">{draft.bays.map((bay, index) => <div className="settings-row bay-settings" key={bay.bay_id}><strong>{bay.name}</strong><label>Opens<input type="time" value={bay.opens_at.slice(0, 5)} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'opens_at', e.target.value)}/></label><label>Closes<input type="time" value={bay.closes_at.slice(0, 5)} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'closes_at', e.target.value)}/></label><label>Capability<select value={bay.bay_type} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'bay_type', e.target.value)}><option value="universal">Universal</option><option value="heavy">Heavy</option></select></label><label className="toggle"><input type="checkbox" checked={bay.active} onChange={(e) => updateList(setDraft, draft, 'bays', index, 'active', e.target.checked)}/><span/>Active</label></div>)}</div>
         </Card>
-        <Card title="Technician capture" eyebrow="Future mobile workflow" className="technician-card"><div className="placeholder-feature"><span><Icon name="train" size={28}/></span><div><h3>Phone-based workshop entry</h3><p>A future Vercel-hosted technician view will record hubometer anchors and maintenance completion against this same Supabase project. Realtime will update OCC screens on connected laptops.</p><BadgeLike/></div></div></Card>
+        <Card title="Technician capture" className="technician-card"><div className="placeholder-feature"><span><Icon name="train" size={28}/></span><div><h3>Phone-based workshop entry</h3><p>Open the mobile workflow to review expected arrivals, capture a hubometer photo and submit an OCR-assisted physical mileage reading.</p><button className="button button-secondary button-small" onClick={() => navigate('technician')}>Open technician app</button></div></div></Card>
       </div>
     <Toast message={toast?.message} tone={toast?.tone} onClose={() => setToast(null)}/>
   </>
@@ -69,5 +69,3 @@ function editableDuration(minutes) {
     ? { value: value / 1440, multiplier: 1440, unit: 'days' }
     : { value: value / 60, multiplier: 60, unit: 'hours' }
 }
-
-function BadgeLike() { return <span className="badge badge-muted">Planned for a later phase</span> }

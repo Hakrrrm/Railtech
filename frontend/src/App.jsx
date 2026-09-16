@@ -7,11 +7,12 @@ import { MaintenancePlanning } from './pages/MaintenancePlanning'
 import { DeploymentPlanning } from './pages/DeploymentPlanning'
 import { Evidence } from './pages/Evidence'
 import { Settings } from './pages/Settings'
+import { TechnicianApp } from './pages/TechnicianApp'
 
 function readRoute() {
   const path = globalThis.location.hash.replace(/^#\/?/, '') || 'fleet'
   const [page, id] = path.split('/')
-  return { page: ['fleet', 'vehicle', 'maintenance', 'deployment', 'evidence', 'settings'].includes(page) ? page : 'fleet', id }
+  return { page: ['fleet', 'vehicle', 'maintenance', 'deployment', 'evidence', 'settings', 'technician'].includes(page) ? page : 'fleet', id }
 }
 
 function App() {
@@ -26,6 +27,8 @@ function App() {
   const reportUpdatedAt = useCallback((value) => {
     setUpdatedAt((current) => !current || value > current ? value : current)
   }, [])
+
+  if (route.page === 'technician') return <TechnicianApp navigate={navigate}/>
 
   let page
   if (route.page === 'vehicle') page = <VehicleDetail lrvId={route.id || 'D07'} navigate={navigate} reportUpdatedAt={reportUpdatedAt}/>

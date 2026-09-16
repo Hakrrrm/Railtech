@@ -40,7 +40,7 @@ export function Layout({ route, navigate, children, updatedAt }) {
         <button className="mobile-menu" aria-label="Toggle navigation" onClick={() => setSidebarOpen(!sidebarOpen)}>☰</button>
         <div className="context"><span className="demo-badge">SPLRT · DEMO</span><span>{formatDate(new Date(), { year: true })}</span>{updatedAt && <small>Live · updated {updatedAt.toLocaleTimeString('en-SG', { hour: '2-digit', minute: '2-digit' })}</small>}</div>
         <div className="admin-wrap"><span className="live-dot"/>Operations View<button className="admin-button" onClick={() => setMenuOpen(!menuOpen)}><b>AD</b> Admin ▾</button>
-          {menuOpen && <div className="admin-menu"><button onClick={() => { go('settings'); setMenuOpen(false) }}><Icon name="settings"/>Planning settings</button><button onClick={resetDemo} disabled={resetting}><Icon name="refresh"/>{resetting ? 'Resetting demo…' : 'Reset demo data'}</button><button disabled><Icon name="train"/>Technician capture <span>Later</span></button></div>}
+          {menuOpen && <div className="admin-menu"><button onClick={() => { go('settings'); setMenuOpen(false) }}><Icon name="settings"/>Planning settings</button><button onClick={resetDemo} disabled={resetting}><Icon name="refresh"/>{resetting ? 'Resetting demo…' : 'Reset demo data'}</button><button onClick={() => { go('technician'); setMenuOpen(false) }}><Icon name="train"/>Technician app</button></div>}
         </div>
       </header>
       <main>{children}</main>

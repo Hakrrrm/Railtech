@@ -251,7 +251,8 @@ now, but worth knowing if you ever add a stricter command later).
    `supabase/migrations/202609150001_dashboard_operations_v2.sql`,
    `supabase/migrations/202609160001_systems_audit_fixes.sql`,
    `supabase/migrations/202609160002_corrective_maintenance.sql`, then
-   `supabase/migrations/202609160003_demo_reset.sql`.
+   `supabase/migrations/202609160003_demo_reset.sql`, then
+   `supabase/migrations/202609160004_technician_capture.sql`.
 2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
    `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
    function check inside a transaction and rolls it back, so seeded records are
@@ -284,6 +285,30 @@ Copy-Item .env.example .env
 npm install
 npm run dev
 ```
+
+Open `/#/technician` directly, or use **Admin → Technician app**. The mobile
+workflow reads proposed and confirmed depot bookings, captures a rear-camera
+photo, sends it to the `ocr-hubometer` Supabase Edge Function, and stores the
+confirmed reading as an append-only physical mileage anchor. Run the technician
+migration above before submitting a reading; it creates the private evidence
+bucket, OCR audit table, confidence validation and submission function.
+
+For a live OCR provider, deploy the Edge Function and store the provider key as
+a server-side Supabase secret. Never put this key in `frontend/.env`:
+
+```powershell
+supabase functions deploy ocr-hubometer
+supabase secrets set OPENAI_API_KEY=your_server_side_key
+# Optional model override:
+supabase secrets set OPENAI_OCR_MODEL=gpt-4.1-mini
+```
+
+Without that secret, the Edge Function returns deterministic demo OCR results.
+If the function itself is not deployed, the frontend also falls back to the
+same synthetic result while `VITE_TECHNICIAN_DEMO_OCR=true`. Set it to `false`
+when validating production error handling. Readings below 85% OCR confidence
+cannot be submitted until the technician explicitly confirms a manual check.
+Capturing a reading does not complete the maintenance booking or reset cycles.
 
 The seeded records stay static until new telemetry arrives. To demonstrate live
 movement, run the normal ingest bridge in one terminal and the optional device

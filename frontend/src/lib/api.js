@@ -1,4 +1,5 @@
 import { supabase, supabaseConfigError } from '../supabaseClient'
+import { singaporeDate } from './format'
 
 function client() {
   if (!supabase) throw new Error(supabaseConfigError)
@@ -67,13 +68,14 @@ export async function loadDeploymentPlanning() {
 
 export async function loadEvidence() {
   const db = client()
-  const [anchors, events, changes, rules] = await Promise.all([
+  const [anchors, events, changes, rules, observations] = await Promise.all([
     result(db.from('mileage_anchors').select('*').order('ts', { ascending: false }).limit(120), 'Mileage evidence'),
     result(db.from('maintenance_events').select('*').order('completed_at', { ascending: false }).limit(120), 'Maintenance evidence'),
     result(db.from('stock_changes').select('*').order('created_at', { ascending: false }).limit(120), 'Deployment evidence'),
     result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
+    result(db.from('technician_observations').select('*').order('captured_at', { ascending: false }).limit(120), 'Technician observations'),
   ])
-  return { anchors, events, changes, rules }
+  return { anchors, events, changes, rules, observations }
 }
 
 export async function loadSettings() {
@@ -84,6 +86,79 @@ export async function loadSettings() {
     result(db.from('depot_bays').select('*').eq('fleet', 'splrt').order('bay_id'), 'Depot bays'),
   ])
   return { settings: settings[0] || null, rules, bays }
+}
+
+export async function loadTechnicianWork() {
+  const db = client()
+  const today = new Date(`${singaporeDate()}T00:00:00+08:00`)
+  const [bookings, mileage, forecasts, faults] = await Promise.all([
+    result(db.from('maintenance_bookings').select('*').in('status', ['proposed', 'confirmed']).gte('end_at', today.toISOString()).order('start_at'), 'Expected maintenance arrivals'),
+    result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'Vehicle mileage'),
+    result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Maintenance forecasts'),
+    result(db.from('maintenance_faults').select('*').in('status', ['open', 'scheduled']).order('reported_at'), 'Maintenance faults'),
+  ])
+  return { bookings, mileage, forecasts, faults }
+}
+
+export async function readHubometerPhoto(file, context) {
+  const db = client()
+  const imageBase64 = await fileToBase64(file)
+  const { data, error } = await db.functions.invoke('ocr-hubometer', {
+    body: {
+      imageBase64,
+      mimeType: file.type || 'image/jpeg',
+      expectedKm: Number(context.expectedKm),
+      lrvId: context.lrvId,
+    },
+  })
+  if (!error && Number.isFinite(Number(data?.valueKm)) && Number.isFinite(Number(data?.confidence))) return data
+  if (import.meta.env.VITE_TECHNICIAN_DEMO_OCR === 'false') throw new Error(error?.message || 'The OCR service did not return a valid reading.')
+  return demoOcrResult(context)
+}
+
+export async function submitHubometerReading(input) {
+  const db = client()
+  const extension = (input.file.name.split('.').pop() || 'jpg').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'jpg'
+  const path = `${input.lrvId}/${Date.now()}-${globalThis.crypto.randomUUID()}.${extension}`
+  const upload = await db.storage.from('hubometer-evidence').upload(path, input.file, {
+    contentType: input.file.type || 'image/jpeg', cacheControl: '3600', upsert: false,
+  })
+  if (upload.error) throw new Error(`Photo upload: ${upload.error.message}`)
+  const { data, error } = await db.rpc('submit_hubometer_observation', {
+    p_lrv_id: input.lrvId,
+    p_value_km: Number(input.valueKm),
+    p_technician_id: input.technicianId,
+    p_image_uri: `hubometer-evidence/${path}`,
+    p_ocr_value_km: Number(input.ocrValueKm),
+    p_ocr_confidence: Number(input.confidence),
+    p_reviewed_manually: Boolean(input.reviewedManually),
+    p_booking_id: input.bookingId || null,
+  })
+  if (error) {
+    await db.storage.from('hubometer-evidence').remove([path])
+    throw new Error(error.message)
+  }
+  return data
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result).split(',')[1])
+    reader.onerror = () => reject(new Error('Could not read the captured photo.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function demoOcrResult(context) {
+  const vehicleNumber = Number(String(context.lrvId).replace(/\D/g, '')) || 1
+  const expected = Number(context.expectedKm) || 100000
+  const lowConfidence = vehicleNumber % 3 === 0
+  return {
+    valueKm: Math.round((expected + (vehicleNumber % 5 - 2) * 0.1) * 10) / 10,
+    confidence: lowConfidence ? 0.68 : 0.94,
+    mode: 'synthetic_fallback',
+  }
 }
 
 export async function scheduleMaintenance(input) {
