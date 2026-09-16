@@ -605,6 +605,41 @@ begin
   end;
   if not rejected then raise exception 'A partial completion without a reason was accepted'; end if;
 
+  -- Technician confirmation must create one linked audit record and complete
+  -- the confirmed package through the same nested-cycle rules.
+  insert into maintenance_bookings (
+    demo_key, lrv_id, primary_cycle, bundled_cycles, bay_id,
+    start_at, end_at, status, notes
+  ) values (
+    'validation:technician-completion', 'D06', 13000, array[2000,13000], 'SPLRT-BAY-1',
+    now() - interval '6 hours', now() - interval '2 hours', 'confirmed',
+    'validation technician visit'
+  );
+  perform submit_hubometer_observation(
+    'D06',
+    (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D06'),
+    'VALIDATION', 'hubometer-evidence/D06/validation.jpg',
+    (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D06'),
+    0.94, false,
+    (select id from maintenance_bookings where demo_key = 'validation:technician-completion')
+  );
+  if not exists (
+    select 1
+    from technician_observations as observation
+    join maintenance_events as event on event.id = observation.maintenance_event_id
+    join maintenance_bookings as booking on booking.id = observation.booking_id
+    where observation.lrv_id = 'D06'
+      and observation.anchor_id is not null
+      and event.reset_cycles = array[2000,13000]
+      and booking.status = 'completed'
+  ) or exists (
+    select 1 from cycle_state
+    where lrv_id = 'D06' and cycle_type in (2000,13000)
+      and (km_since <> 0 or km_to_next <> cycle_type)
+  ) then
+    raise exception 'Technician confirmation did not complete and reset its confirmed package';
+  end if;
+
   perform confirm_stock_change(
     (select id from stock_changes where demo_key = 'demo:stock:D29:D27'),
     'VALIDATION'
@@ -642,6 +677,12 @@ begin
     where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$' and seq >= 950000000
   ) then
     raise exception 'Demo reset did not clear simulator events';
+  end if;
+  if exists (
+    select 1 from technician_observations
+    where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+  ) then
+    raise exception 'Demo reset did not clear technician observations';
   end if;
   if not exists (
     select 1 from cycle_state where lrv_id = 'D12' and cycle_type = 2000 and km_to_next = 0

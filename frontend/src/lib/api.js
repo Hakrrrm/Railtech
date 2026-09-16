@@ -92,7 +92,7 @@ export async function loadTechnicianWork() {
   const db = client()
   const today = new Date(`${singaporeDate()}T00:00:00+08:00`)
   const [bookings, mileage, forecasts, faults] = await Promise.all([
-    result(db.from('maintenance_bookings').select('*').in('status', ['proposed', 'confirmed']).gte('end_at', today.toISOString()).order('start_at'), 'Expected maintenance arrivals'),
+    result(db.from('maintenance_bookings').select('*').eq('status', 'confirmed').gte('end_at', today.toISOString()).order('start_at'), 'Expected maintenance arrivals'),
     result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'Vehicle mileage'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Maintenance forecasts'),
     result(db.from('maintenance_faults').select('*').in('status', ['open', 'scheduled']).order('reported_at'), 'Maintenance faults'),
@@ -197,6 +197,23 @@ export async function cancelMaintenanceBooking(bookingId, reason = 'Cancelled by
 
 export async function resetDashboardDemo() {
   const db = client()
+  const demoLrvIds = Array.from({ length: 30 }, (_, index) => `D${String(index + 1).padStart(2, '0')}`)
+  const { data: observations, error: observationError } = await db
+    .from('technician_observations')
+    .select('image_uri')
+    .in('lrv_id', demoLrvIds)
+  if (observationError) throw new Error(`Technician evidence: ${observationError.message}`)
+  const prefix = 'hubometer-evidence/'
+  const imagePaths = [...new Set((observations || [])
+    .map((row) => String(row.image_uri || ''))
+    .filter((uri) => uri.startsWith(prefix))
+    .map((uri) => uri.slice(prefix.length)))]
+  for (let offset = 0; offset < imagePaths.length; offset += 1000) {
+    const { error: storageError } = await db.storage
+      .from('hubometer-evidence')
+      .remove(imagePaths.slice(offset, offset + 1000))
+    if (storageError) throw new Error(`Technician photo reset: ${storageError.message}`)
+  }
   const { error } = await db.rpc('reset_dashboard_demo')
   if (error) throw new Error(error.message)
 }

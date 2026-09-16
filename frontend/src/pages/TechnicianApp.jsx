@@ -23,6 +23,7 @@ export function TechnicianApp({ navigate }) {
   const [reading, setReading] = useState('')
   const [reviewed, setReviewed] = useState(false)
   const [technicianId, setTechnicianId] = useState('TECH-DEMO')
+  const [completedLrvId, setCompletedLrvId] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const inputRef = useRef(null)
@@ -68,13 +69,13 @@ export function TechnicianApp({ navigate }) {
         technicianId: technicianId.trim(), confidence: ocr.confidence,
         reviewedManually: manualRequired ? reviewed : value !== Number(ocr.valueKm), file,
       })
-      setScreen('success'); state.refresh(true)
+      setCompletedLrvId(selected.lrvId); setScreen('success'); state.refresh(true)
     } catch (submitError) { setError(submitError.message) }
     finally { setBusy(false) }
   }
   const reset = () => {
     if (preview) URL.revokeObjectURL(preview)
-    setPreview(null); setFile(null); setOcr(null); setReading(''); setReviewed(false); setError(null); setScreen('queue')
+    setPreview(null); setFile(null); setOcr(null); setReading(''); setReviewed(false); setCompletedLrvId(null); setError(null); setScreen('queue')
   }
 
   return <div className="technician-stage"><section className="technician-phone">
@@ -91,16 +92,16 @@ export function TechnicianApp({ navigate }) {
           <span className="tech-job-copy"><strong>{vehicleLabel(job.lrvId)} · {job.scope}</strong><small>{formatDate(job.booking.start_at)} · {formatTime(job.booking.start_at)} · {job.bayName}</small><small>{job.workType === 'corrective' ? job.fault?.description : forecastLabel(job.forecastDays)}</small></span>
           <span className={`tech-status ${job.booking.status}`}>{job.booking.status}</span><Icon name="chevron"/>
         </button>)}</div>
-        {jobs.length === 0 && <TechState icon="check" title="No expected arrivals" text="There are no proposed or confirmed depot visits to action."/>}
+        {jobs.length === 0 && <TechState icon="check" title="No confirmed arrivals" text="There are no confirmed depot visits to action."/>}
         {jobs.length > pageSize && <div className="tech-pagination"><button disabled={page === 0} onClick={() => setPage(page - 1)}><Icon name="arrow"/></button><span>{page + 1} of {pageCount}</span><button disabled={page >= pageCount - 1} onClick={() => setPage(page + 1)}><Icon name="chevron"/></button></div>}
       </>}
 
       {!state.loading && !state.error && screen === 'detail' && selected && <>
         <div className="tech-vehicle-summary"><span><Icon name={selected.workType === 'corrective' ? 'alert' : 'train'} size={23}/></span><div><strong>{vehicleLabel(selected.lrvId)}</strong><small>{selected.scope} · {selected.booking.status}</small></div><b>{selected.bayName}</b></div>
-        <div className="tech-visit"><div><span>Expected</span><strong>{formatDate(selected.booking.start_at)} · {formatTime(selected.booking.start_at)}</strong></div><div><span>Work scope</span><strong>{selected.scope}</strong></div></div>
+        <div className="tech-visit"><div><span>Booked</span><strong>{formatDate(selected.booking.start_at)} · {formatTime(selected.booking.start_at)}</strong></div><div><span>Completed scope</span><strong>{selected.scope}</strong></div></div>
         <div className="tech-metrics"><div><span>Planning mileage</span><strong>{formatKm(selected.planningMileage, 1)}</strong></div><div><span>Next mileage work</span><strong>{selected.workType === 'corrective' ? 'Fault repair' : `${cycleLabel(selected.forecast?.cycle_type)} · ${formatKm(selected.forecast?.km_to_next)}`}</strong></div><div><span>Device reading</span><strong>{formatKm(selected.deviceMileage, 1)}</strong></div><div><span>Last physical check</span><strong>{formatKm(selected.lastPhysicalCheck, 1)}</strong></div></div>
         {selected.workType === 'corrective' && <div className="tech-alert"><Icon name="alert"/><span><strong>{selected.fault?.fault_code}</strong>{selected.fault?.description}</span></div>}
-        <div className="tech-bottom-actions"><button className="tech-primary" onClick={beginCapture}><Icon name="camera"/>Record hubometer reading</button><small>This records mileage evidence. It does not complete maintenance.</small></div>
+        <div className="tech-bottom-actions"><button className="tech-primary" onClick={beginCapture}><Icon name="camera"/>Record hubometer reading</button><small>Confirming the reading completes this booking and records the completed maintenance scope.</small></div>
       </>}
 
       {!state.loading && !state.error && screen === 'capture' && selected && <>
@@ -118,10 +119,10 @@ export function TechnicianApp({ navigate }) {
           ? <label className="tech-review-required"><input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)}/><span><strong>Check every digit against the photo</strong>Low-confidence readings cannot be sent until manually verified.</span></label>
           : <div className="tech-confidence-ok"><Icon name="check"/><span><strong>High-confidence OCR result</strong>Edit the reading above if the displayed digits differ.</span></div>}
         <label className="tech-id-field">Technician ID<input value={technicianId} maxLength="40" onChange={(event) => setTechnicianId(event.target.value)}/></label>
-        <div className="tech-bottom-actions tech-review-actions"><button className="tech-secondary" disabled={busy} onClick={beginCapture}>Retake</button><button className="tech-primary" disabled={busy || (requiresManualOcrReview(ocr.confidence) && !reviewed)} onClick={submit}>{busy ? 'Sending…' : 'Confirm and send'}</button></div>
+        <div className="tech-bottom-actions tech-review-actions"><button className="tech-secondary" disabled={busy} onClick={beginCapture}>Retake</button><button className="tech-primary" disabled={busy || (requiresManualOcrReview(ocr.confidence) && !reviewed)} onClick={submit}>{busy ? 'Completing…' : 'Confirm and complete'}</button></div>
       </>}
 
-      {!state.loading && !state.error && screen === 'success' && <TechState icon="check" title="Reading recorded" text={`${vehicleLabel(selected?.lrvId)} now has a new physical mileage anchor. OCC views will update automatically.`} action={<button className="tech-primary" onClick={reset}>Back to expected LRVs</button>}/>}
+      {!state.loading && !state.error && screen === 'success' && <TechState icon="check" title="Maintenance completed" text={`${vehicleLabel(completedLrvId)} has a new physical mileage anchor. The booking, maintenance cycles and OCC views are now updated.`} action={<button className="tech-primary" onClick={reset}>Back to expected LRVs</button>}/>}
       {error && <div className="tech-error" role="alert"><Icon name="alert"/><span>{error}</span><button aria-label="Dismiss" onClick={() => setError(null)}>×</button></div>}
     </main>
   </section></div>
@@ -157,7 +158,7 @@ function heading(screen) {
   return { queue: 'Expected maintenance', detail: 'LRV work summary', capture: 'Capture hubometer', review: 'Review reading' }[screen]
 }
 function headingEyebrow(screen) {
-  return { queue: 'Workshop arrivals', detail: 'Before work starts', capture: 'Physical mileage', review: 'OCR validation' }[screen]
+  return { queue: 'Workshop arrivals', detail: 'Complete workshop job', capture: 'Physical mileage', review: 'OCR validation' }[screen]
 }
 function formatSignedKm(value) {
   if (!Number.isFinite(value)) return '—'

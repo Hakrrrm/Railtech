@@ -261,7 +261,9 @@ now, but worth knowing if you ever add a stricter command later).
    21 elapsed days. Higher packages include every lower cycle; technicians
    record the actual completed scope and only those cycles reset. For a
    browser-driven restart, use **Admin → Reset demo data**. This restores the
-   seeded planning state and removes reserved-range simulator events; stop the
+   seeded planning state, removes technician observations and deletes their
+   photos through the Storage API. It also removes reserved-range simulator
+   events; stop the
    MQTT simulator first so it does not immediately publish new events. For a
    hardware-only project, copy `supabase/seed.example.sql` and
    adjust `lrv_id` values to match your
@@ -287,7 +289,7 @@ npm run dev
 ```
 
 Open `/#/technician` directly, or use **Admin → Technician app**. The mobile
-workflow reads proposed and confirmed depot bookings, captures a rear-camera
+workflow reads confirmed depot bookings, captures a rear-camera
 photo, sends it to the `ocr-hubometer` Supabase Edge Function, and stores the
 confirmed reading as an append-only physical mileage anchor. Run the technician
 migration above before submitting a reading; it creates the private evidence
@@ -308,7 +310,9 @@ If the function itself is not deployed, the frontend also falls back to the
 same synthetic result while `VITE_TECHNICIAN_DEMO_OCR=true`. Set it to `false`
 when validating production error handling. Readings below 85% OCR confidence
 cannot be submitted until the technician explicitly confirms a manual check.
-Capturing a reading does not complete the maintenance booking or reset cycles.
+Confirming a reading completes the selected booking in the same transaction. A
+preventive booking resets every cycle in its confirmed package; a corrective
+booking resolves its linked fault without resetting mileage cycles.
 
 The seeded records stay static until new telemetry arrives. To demonstrate live
 movement, run the normal ingest bridge in one terminal and the optional device
