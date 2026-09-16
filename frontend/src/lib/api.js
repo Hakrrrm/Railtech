@@ -13,13 +13,14 @@ async function result(query, label) {
 
 export async function loadFleetOverview() {
   const db = client()
-  const [vehicles, mileage, forecasts, bookings] = await Promise.all([
+  const [vehicles, mileage, forecasts, bookings, settings] = await Promise.all([
     result(db.from('vehicles').select('*').order('lrv_id'), 'Vehicles'),
     result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'Mileage summary'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Cycle forecasts'),
     result(db.from('maintenance_bookings').select('*').in('status', ['proposed', 'confirmed']).order('start_at'), 'Bookings'),
+    result(db.from('planning_settings').select('*').eq('fleet', 'splrt').limit(1), 'Planning settings'),
   ])
-  return { vehicles, mileage, forecasts, bookings }
+  return { vehicles, mileage, forecasts, bookings, settings: settings[0] || null }
 }
 
 export async function loadVehicleDetail(lrvId) {
@@ -36,15 +37,16 @@ export async function loadVehicleDetail(lrvId) {
 
 export async function loadMaintenancePlanning() {
   const db = client()
-  const [vehicles, forecasts, bookings, bays, rules, settings] = await Promise.all([
+  const [vehicles, mileage, forecasts, bookings, bays, rules, settings] = await Promise.all([
     result(db.from('vehicles').select('*').order('lrv_id'), 'Vehicles'),
+    result(db.from('vehicle_mileage_summary').select('lrv_id,lifetime_planning_mileage_km,device_odo_km').order('lrv_id'), 'Mileage summary'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Recall forecasts'),
     result(db.from('maintenance_bookings').select('*').order('start_at'), 'Depot bookings'),
     result(db.from('depot_bays').select('*').order('bay_id'), 'Depot bays'),
     result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
     result(db.from('planning_settings').select('*').eq('fleet', 'splrt').limit(1), 'Planning settings'),
   ])
-  return { vehicles, forecasts, bookings, bays, rules, settings: settings[0] || null }
+  return { vehicles, mileage, forecasts, bookings, bays, rules, settings: settings[0] || null }
 }
 
 export async function loadDeploymentPlanning() {
@@ -102,6 +104,14 @@ export async function completeMaintenance(input) {
   return data
 }
 
+export async function cancelMaintenanceBooking(bookingId, reason = 'Cancelled by OCC planner') {
+  const db = client()
+  const { error } = await db.rpc('cancel_maintenance_booking', {
+    p_booking_id: bookingId, p_reason: reason,
+  })
+  if (error) throw new Error(error.message)
+}
+
 export async function selectStockReplacement(changeId, replacementLrvId) {
   const db = client()
   const { error } = await db.rpc('select_stock_replacement', {
@@ -142,9 +152,9 @@ export async function saveCycleRule(rule) {
 
 export async function saveBay(bay) {
   const db = client()
-  const { error } = await db.from('depot_bays').upsert({
-    bay_id: bay.bay_id, fleet: 'splrt', name: bay.name, bay_type: bay.bay_type,
+  const { error } = await db.from('depot_bays').update({
+    name: bay.name, bay_type: bay.bay_type,
     opens_at: bay.opens_at, closes_at: bay.closes_at, active: Boolean(bay.active),
-  })
+  }).eq('bay_id', bay.bay_id).eq('fleet', 'splrt')
   if (error) throw new Error(error.message)
 }

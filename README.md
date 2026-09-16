@@ -245,9 +245,11 @@ now, but worth knowing if you ever add a stricter command later).
 
 ## Supabase / ingest bridge setup (NOTES)
 
-1. Create a Supabase project, run `supabase/schema.sql` in the SQL editor.
-   For a project that already has the original four tables, run only
-   `supabase/migrations/202609150001_dashboard_operations_v2.sql`.
+1. Create a Supabase project and run `supabase/schema.sql` in the SQL editor.
+   For a project that already has the original four tables, run these two
+   migrations in order:
+   `supabase/migrations/202609150001_dashboard_operations_v2.sql`, then
+   `supabase/migrations/202609160001_systems_audit_fixes.sql`.
 2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
    `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
    function check inside a transaction and rolls it back, so seeded records are
@@ -290,7 +292,18 @@ npm run simulate
 
 Configure `SIM_VEHICLES`, `SIM_INTERVAL_MS`, `SIM_SPEED`, and `SIM_SCENARIO`
 (`normal`, `mixed_quality`, or `weak_gnss`) in `ingest/.env`. Stop the simulator
-with Ctrl+C. Its local `.simulator-state.json` file is gitignored.
+with Ctrl+C. `SIM_SPEED` changes the event cadence and dwell time; calibrated
+segment distances never change. On startup the simulator reconciles its local
+sequence and odometer with Supabase so a restarted demo cannot move an odometer
+backwards. Its local `.simulator-state.json` file is gitignored.
+
+To verify only the broker path without writing to Supabase, run
+`npm run test:mqtt` from `ingest/`. This publishes one uniquely named test topic,
+receives it back and validates the packet through the production event mapper.
+
+The challenge prototype permits selected unauthenticated dashboard mutations.
+Before any operational deployment, add authentication/RBAC, use an authenticated
+TLS MQTT broker, and complete the firmware SD-backfill path described below.
 
 ## Supabase / ingest bridge setup (DETAILS)
 

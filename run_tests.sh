@@ -45,8 +45,23 @@ echo "== tools/test_track_pipeline =="
 python3 tools/test_track_pipeline.py
 
 echo
-echo "== ingest/test_index (event_mapper) =="
-node ingest/test_index.js
+echo "== ingest bridge and simulator =="
+NODE_BIN="$(command -v node || command -v node.exe || true)"
+if [ -z "$NODE_BIN" ]; then
+    echo "ERROR: Node.js is required for ingest tests" >&2
+    exit 1
+fi
+"$NODE_BIN" ingest/test_index.js
+"$NODE_BIN" ingest/test_simulator.js
+
+echo
+echo "== frontend tests, lint and production build =="
+NPM_BIN="$(command -v npm || command -v npm.exe || true)"
+if [ -z "$NPM_BIN" ]; then
+    echo "ERROR: npm is required for frontend checks" >&2
+    exit 1
+fi
+(cd frontend && "$NPM_BIN" test && "$NPM_BIN" run lint && "$NPM_BIN" run build)
 
 echo
 echo "run_tests.sh: all suites passed"

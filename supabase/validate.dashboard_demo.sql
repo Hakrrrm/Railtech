@@ -192,7 +192,7 @@ begin
     from cycle_state
     where lrv_id = 'D12'
       and cycle_type = 2000
-      and km_to_next = 400
+      and km_to_next = 0
       and due_date = current_date
   ) then
     raise exception 'D12 due-today scenario is missing';
@@ -343,8 +343,28 @@ begin
     raise exception 'Mileage summary view must return all 30 demo vehicles';
   end if;
 
-  if (select count(*) from cycle_forecasts) < 150 then
-    raise exception 'Cycle forecast view is missing demo cycle rows';
+  if (
+    select count(*) from cycle_forecasts
+    where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+  ) <> 150 then
+    raise exception 'Cycle forecast view must return exactly 150 demo cycle rows';
+  end if;
+
+  if not exists (
+    select 1 from cycle_forecasts
+    where lrv_id = 'D12' and cycle_type = 2000 and forecast_days = 0
+  ) then
+    raise exception 'D12 must forecast as due today from its mileage state';
+  end if;
+
+  if exists (
+    select 1 from deployment_eligibility
+    where lrv_id = 'D08' and (eligible or free_of_duty)
+  ) or (
+    select count(*) from deployment_eligibility
+    where lrv_id in ('D27', 'D28') and eligible and free_of_booking and free_of_duty
+  ) <> 2 then
+    raise exception 'Deployment eligibility must exclude assigned vehicles and retain both idle reserves';
   end if;
 
   -- A duplicate sequence must not fire the insert trigger twice.
@@ -359,6 +379,14 @@ begin
     raise exception 'Duplicate SEG_DONE sequence incremented cycle state more than once';
   end if;
 
+  rejected := false;
+  begin
+    insert into segment_traversals (lrv_id, seq, seg_id, ts, length_m, dir, odo_km, confidence, hdop)
+    values ('D08', 999999998, 'VALIDATION_REGRESSION', now(), 100, 'E', 1, 0.99, 0.8);
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'A regressing device odometer was accepted'; end if;
+
   -- The booking RPC must reject occupied bays, incompatible capability and
   -- a plan that breaches the configured minimum operating fleet.
   rejected := false;
@@ -368,6 +396,30 @@ begin
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Overlapping bay booking was accepted'; end if;
+
+  rejected := false;
+  begin
+    perform schedule_maintenance('D07', 13000, array[2000,13000], 'SPLRT-BAY-2',
+      current_date + 1 + time '09:30', current_date + 1 + time '12:00', 'proposed', 'vehicle overlap test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'The same vehicle was booked into two bays at once'; end if;
+
+  rejected := false;
+  begin
+    perform schedule_maintenance('D08', 13000, array[13000], 'SPLRT-BAY-1',
+      current_date + 6 + time '13:00', current_date + 6 + time '15:30', 'proposed', 'nested set test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'An incomplete nested-cycle booking was accepted'; end if;
+
+  rejected := false;
+  begin
+    perform schedule_maintenance('D08', 2000, array[2000], 'SPLRT-BAY-1',
+      current_date + 6 + time '13:00', current_date + 6 + time '13:30', 'proposed', 'duration test');
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'A booking shorter than the configured task duration was accepted'; end if;
 
   insert into depot_bays (bay_id, fleet, name, bay_type, opens_at, closes_at, active)
   values ('VALIDATION-BAY', 'splrt', 'Validation bay', 'routine', '06:00', '23:00', true);
@@ -387,6 +439,24 @@ begin
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Service-coverage floor was not enforced'; end if;
+
+  perform complete_maintenance(
+    'D18', 2000,
+    (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D18'),
+    'VALIDATION',
+    (select id from maintenance_bookings where demo_key = 'demo:booking:D18')
+  );
+  rejected := false;
+  begin
+    perform complete_maintenance(
+      'D18', 2000,
+      (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D18'),
+      'VALIDATION',
+      (select id from maintenance_bookings where demo_key = 'demo:booking:D18')
+    );
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'A completed booking reset maintenance twice'; end if;
 
   -- Exercise the atomic nested reset inside this validation transaction.
   -- The script rolls back below, leaving the seeded state untouched.
@@ -409,6 +479,18 @@ begin
       and km_to_next = cycle_type
   ) <> 3 then
     raise exception '40K completion did not reset 2K, 13K, and 40K';
+  end if;
+
+  perform confirm_stock_change(
+    (select id from stock_changes where demo_key = 'demo:stock:D29:D27'),
+    'VALIDATION'
+  );
+  if not exists (
+    select 1 from stock_changes
+    where demo_key = 'demo:stock:D29:D27' and decision_status = 'confirmed'
+      and replacement_assignment_id is not null
+  ) then
+    raise exception 'Atomic stock change did not record the replacement assignment';
   end if;
 end
 $validation$;

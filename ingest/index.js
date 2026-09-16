@@ -1,112 +1,120 @@
-// Thin MQTT -> Supabase ingest bridge (Build Plan Sec 8).
-//
-// Subscribes to lrv/+/+/events, maps each Tier 1 SEG_DONE payload to a
-// segment_traversals row, and upserts it with ignoreDuplicates so a
-// duplicate delivery (QoS 1 redelivery, SD backlog replay, manual
-// reprocess) is a silent no-op -- the DB's unique(lrv_id, seq) constraint
-// is the single source of idempotency (TDD Sec 5.6/5.7).
-//
-// Malformed JSON, and any insert error other than "already exists" (e.g.
-// an unknown lrv_id rejected by the FK -- desirable per Build Plan Sec 8),
-// goes to a dead-letter ndjson log. The bridge never crashes on bad input:
-// it is stateless and restart-safe by construction, because the DB holds
-// all state.
+// MQTT -> Supabase ingest bridge. Database uniqueness on (lrv_id, seq) is
+// the final idempotency boundary; this process adds validation, bounded
+// retries and per-vehicle ordering before rows reach that boundary.
 
-import "dotenv/config";
-import fs from "node:fs";
-import mqtt from "mqtt";
-import { createClient } from "@supabase/supabase-js";
-import { parseEvent } from "./event_mapper.js";
+import 'dotenv/config'
+import fs from 'node:fs'
+import path from 'node:path'
+import mqtt from 'mqtt'
+import { createClient } from '@supabase/supabase-js'
+import { fileURLToPath } from 'node:url'
+import { parseEvent, parseEventTopic } from './event_mapper.js'
 
-const MQTT_URL = process.env.MQTT_URL; // e.g. mqtts://host:8883 or mqtt://host:1883
-const MQTT_USERNAME = process.env.MQTT_USERNAME || undefined;
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || undefined;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const DEAD_LETTER_PATH = process.env.DEAD_LETTER_PATH || "./dead_letter.ndjson";
-const EVENTS_TOPIC = "lrv/+/+/events";
+const EVENTS_TOPIC = 'lrv/+/+/events'
 
-for (const [name, val] of Object.entries({ MQTT_URL, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY })) {
-  if (!val) {
-    console.error(`FATAL: environment variable ${name} is required (see .env.example)`);
-    process.exit(1);
+export function appendDeadLetter(filePath, reason, raw, topic) {
+  const entry = JSON.stringify({ ts: new Date().toISOString(), topic, reason, raw })
+  try {
+    fs.mkdirSync(path.dirname(path.resolve(filePath)), { recursive: true })
+    fs.appendFileSync(filePath, `${entry}\n`, 'utf8')
+  } catch (error) {
+    console.error(`FAILED TO WRITE DEAD LETTER LOG: ${error.message}`)
   }
+  console.warn(`[dead-letter] ${reason} (topic=${topic})`)
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))
 
-function deadLetter(reason, raw, topic) {
-  const entry = JSON.stringify({
-    ts: new Date().toISOString(), topic, reason, raw,
-  });
-  fs.appendFile(DEAD_LETTER_PATH, entry + "\n", (err) => {
-    if (err) {
-      // Last resort: nothing else we can do without risking a crash loop.
-      console.error(`FAILED TO WRITE DEAD LETTER LOG: ${err.message}; entry was: ${entry}`);
+export async function upsertWithRetry(supabase, row, options = {}) {
+  const attempts = options.attempts ?? 3
+  const baseDelayMs = options.baseDelayMs ?? 250
+  let lastError
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const { error } = await supabase
+      .from('segment_traversals')
+      .upsert(row, { onConflict: 'lrv_id,seq', ignoreDuplicates: true })
+    if (!error) return
+    lastError = error
+    if (attempt < attempts) await wait(baseDelayMs * (2 ** (attempt - 1)))
+  }
+  throw new Error(lastError?.message || 'unknown Supabase insert failure')
+}
+
+export function createMessageHandler({ supabase, deadLetterPath, nowMs = () => Date.now() }) {
+  return async function handleMessage(topic, payload) {
+    const parsed = parseEvent(payload, { topic, nowMs: nowMs() })
+    if (!parsed.ok) {
+      appendDeadLetter(deadLetterPath, parsed.reason, parsed.raw, topic)
+      return { status: 'rejected', reason: parsed.reason }
     }
-  });
-  console.warn(`[dead-letter] ${reason} (topic=${topic})`);
+    if (parsed.row === null) return { status: 'ignored' }
+
+    try {
+      await upsertWithRetry(supabase, parsed.row)
+      console.log(`[ingested] ${parsed.row.lrv_id} seq=${parsed.row.seq} seg=${parsed.row.seg_id}`)
+      return { status: 'ingested', row: parsed.row }
+    } catch (error) {
+      appendDeadLetter(deadLetterPath, `insert failed after retries: ${error.message}`, JSON.stringify(parsed.row), topic)
+      return { status: 'rejected', reason: error.message }
+    }
+  }
 }
 
-async function handleMessage(topic, payload) {
-  const parsed = parseEvent(payload);
-
-  if (!parsed.ok) {
-    deadLetter(parsed.reason, parsed.raw, topic);
-    return;
+function safeBrokerLabel(value) {
+  try {
+    const parsed = new URL(value)
+    return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ''}`
+  } catch {
+    return '[configured broker]'
   }
-  if (parsed.row === null) {
-    return; // valid, understood, nothing to ingest (e.g. non-SEG_DONE event)
-  }
-
-  const { error } = await supabase
-    .from("segment_traversals")
-    .upsert(parsed.row, { onConflict: "lrv_id,seq", ignoreDuplicates: true });
-
-  if (error) {
-    // Includes the FK rejection for an unseeded vehicle -- desirable per
-    // Build Plan Sec 8, but still needs to be visible, not silently lost.
-    deadLetter(`insert failed: ${error.message}`, JSON.stringify(parsed.row), topic);
-    return;
-  }
-
-  console.log(`[ingested] ${parsed.row.lrv_id} seq=${parsed.row.seq} seg=${parsed.row.seg_id}`);
 }
 
-function main() {
-  const client = mqtt.connect(MQTT_URL, {
-    username: MQTT_USERNAME,
-    password: MQTT_PASSWORD,
+export function runBridge(environment = process.env) {
+  const mqttUrl = environment.MQTT_URL
+  const supabaseUrl = environment.SUPABASE_URL
+  const serviceRoleKey = environment.SUPABASE_SERVICE_ROLE_KEY
+  const deadLetterPath = environment.DEAD_LETTER_PATH || './dead_letter.ndjson'
+  for (const [name, value] of Object.entries({ MQTT_URL: mqttUrl, SUPABASE_URL: supabaseUrl, SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey })) {
+    if (!value) throw new Error(`environment variable ${name} is required (see .env.example)`)
+  }
+  if (String(mqttUrl).startsWith('mqtt://')) {
+    console.warn('[security] MQTT transport is unencrypted; use mqtts:// with credentials outside local/demo testing')
+  }
+
+  const supabase = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } })
+  const handleMessage = createMessageHandler({ supabase, deadLetterPath })
+  const queues = new Map()
+  const client = mqtt.connect(mqttUrl, {
+    username: environment.MQTT_USERNAME || undefined,
+    password: environment.MQTT_PASSWORD || undefined,
     reconnectPeriod: 2000,
-  });
+    clean: true,
+    clientId: `railtech-ingest-${process.pid}-${Math.random().toString(36).slice(2, 10)}`,
+  })
 
-  client.on("connect", () => {
-    console.log(`connected to ${MQTT_URL}, subscribing ${EVENTS_TOPIC}`);
-    client.subscribe(EVENTS_TOPIC, { qos: 1 }, (err) => {
-      if (err) {
-        console.error(`FATAL: subscribe failed: ${err.message}`);
-        process.exit(1);
-      }
-    });
-  });
+  const enqueue = (topic, payload) => {
+    const queueKey = parseEventTopic(topic)?.lrvId || topic
+    const previous = queues.get(queueKey) || Promise.resolve()
+    const current = previous
+      .then(() => handleMessage(topic, payload))
+      .catch((error) => appendDeadLetter(deadLetterPath, `unexpected error: ${error.message}`, payload.toString('utf8'), topic))
+      .finally(() => { if (queues.get(queueKey) === current) queues.delete(queueKey) })
+    queues.set(queueKey, current)
+  }
 
-  client.on("message", (topic, payload) => {
-    handleMessage(topic, payload).catch((e) => {
-      // Should be unreachable (handleMessage catches its own errors via
-      // parseEvent/supabase error objects), but the bridge must never die.
-      deadLetter(`unexpected error: ${e.message}`, payload.toString("utf-8"), topic);
-    });
-  });
-
-  client.on("error", (err) => {
-    console.error(`mqtt error: ${err.message}`);
-  });
-
-  client.on("reconnect", () => {
-    console.log("mqtt reconnecting...");
-  });
+  client.on('connect', () => {
+    console.log(`connected to ${safeBrokerLabel(mqttUrl)}, subscribing ${EVENTS_TOPIC}`)
+    client.subscribe(EVENTS_TOPIC, { qos: 1 }, (error) => {
+      if (error) console.error(`subscribe failed: ${error.message}; MQTT client will reconnect`)
+    })
+  })
+  client.on('message', enqueue)
+  client.on('error', (error) => console.error(`mqtt error: ${error.message}`))
+  client.on('reconnect', () => console.log('mqtt reconnecting...'))
+  return { client, pending: queues }
 }
 
-main();
+const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+if (invokedDirectly) {
+  try { runBridge() } catch (error) { console.error(`FATAL: ${error.message}`); process.exitCode = 1 }
+}

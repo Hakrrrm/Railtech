@@ -86,6 +86,10 @@ function TrendChart({ trend }) {
 }
 
 function RoutePosition({ current, direction }) {
-  const activeIndex = Math.max(0, routeSegments.indexOf(current))
-  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' → ')}</small></div>)}</div><p><Badge value={direction === 'W' ? 'Westbound' : 'Eastbound'} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
+  const activeIndex = routeSegments.indexOf(current)
+  if (current && activeIndex < 0) {
+    return <div className="route-map"><p className="empty-copy">The latest segment is <strong>{current}</strong>. Route geometry has not been loaded for this track dataset, so the dashboard will not guess a position.</p></div>
+  }
+  const directionLabel = { E: 'Eastbound', W: 'Westbound', N: 'Northbound', S: 'Southbound' }[direction] || 'Direction unavailable'
+  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' → ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
 }

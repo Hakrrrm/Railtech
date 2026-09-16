@@ -58,7 +58,7 @@ export function DeploymentPlanning({ navigate, reportUpdatedAt }) {
 
         <Card title="Replacement alternatives" eyebrow="Ranked by serviceability, booking conflicts, maintenance margin and wear balance" action={<button className="text-button" onClick={() => navigate('maintenance')}>View depot bookings <Icon name="chevron"/></button>}>
           <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Vehicle</th><th>Availability</th><th>Maintenance margin</th><th>Rolling use</th><th>After projected duty</th><th/></tr></thead><tbody>
-            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{item.lrv_id}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={item.eligible ? 'Eligible' : item.free_of_booking ? 'Margin too low' : 'Depot booking'} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{formatKm(item.rolling_daily_rate_km)}/day</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
+            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{item.lrv_id}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={availabilityLabel(item)} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{formatKm(item.rolling_daily_rate_km)}/day</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
           </tbody></table></div>
         </Card>
       </>}
@@ -78,10 +78,18 @@ function buildDeploymentModel(data) {
     depot: data.vehicles.filter((row) => row.status === 'maintenance').length,
     withdrawn: data.vehicles.filter((row) => row.status === 'faulty').length,
     assignments: activeAssignments.map((row) => ({ ...row, vehicleStatus: vehicleStatus.get(row.lrv_id) })).sort((a, b) => Number(b.vehicleStatus === 'faulty') - Number(a.vehicleStatus === 'faulty') || a.lrv_id.localeCompare(b.lrv_id)),
-    alternatives: [...data.eligibility].sort((a, b) => Number(b.eligible) - Number(a.eligible) || Number(b.free_of_booking) - Number(a.free_of_booking) || Number(b.available_duty_margin_km) - Number(a.available_duty_margin_km) || Number(a.rolling_daily_rate_km) - Number(b.rolling_daily_rate_km)),
+    alternatives: [...data.eligibility].sort((a, b) => Number(b.eligible) - Number(a.eligible) || Number(b.free_of_booking) - Number(a.free_of_booking) || Number(b.free_of_duty) - Number(a.free_of_duty) || Number(b.available_duty_margin_km) - Number(a.available_duty_margin_km) || Number(a.rolling_daily_rate_km) - Number(b.rolling_daily_rate_km)),
     proposal: data.changes.find((row) => row.decision_status === 'proposed') || null,
     hours: Array.from({ length: 6 }, (_, index) => new Date(windowStart.getTime() + index * 3600000)), windowStart, windowEnd,
   }
+}
+
+function availabilityLabel(item) {
+  if (item.eligible) return 'Eligible'
+  if (!['idle', 'in_service'].includes(item.status)) return statusLabel(item.status)
+  if (!item.free_of_booking) return 'Depot booking'
+  if (!item.free_of_duty) return 'Already assigned'
+  return 'Margin too low'
 }
 
 function assignmentStyle(assignment, start, end) {

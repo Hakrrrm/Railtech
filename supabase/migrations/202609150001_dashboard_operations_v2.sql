@@ -391,7 +391,7 @@ begin
   if p_status = 'confirmed' then
     select count(*) into v_serviceable
     from vehicles where fleet = v_fleet and status = 'in_service';
-    if v_serviceable - case when (select status from vehicles where lrv_id = p_lrv_id) = 'in_service' then 1 else 0 end
+    if v_serviceable - (case when (select status from vehicles where lrv_id = p_lrv_id) = 'in_service' then 1 else 0 end)
        < coalesce(v_settings.minimum_service_vehicles, 0) then
       raise exception 'Booking would reduce the operating fleet below its service minimum';
     end if;

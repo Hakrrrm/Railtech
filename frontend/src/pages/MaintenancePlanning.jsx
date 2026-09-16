@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { completeMaintenance, loadMaintenancePlanning, scheduleMaintenance } from '../lib/api'
+import { cancelMaintenanceBooking, completeMaintenance, loadMaintenancePlanning, scheduleMaintenance } from '../lib/api'
 import { cycleLabel, forecastLabel, formatDate, formatKm, formatTime, singaporeDate } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
@@ -22,10 +22,12 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   const suggest = (item) => {
-    const cycles = state.data.forecasts.filter((cycle) => cycle.lrv_id === item.lrv_id && cycle.forecast_days !== null && Number(cycle.forecast_days) <= Number(item.forecast_days) + 2).map((cycle) => Number(cycle.cycle_type))
-    const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === Number(item.cycle_type))
+    const approaching = state.data.forecasts.filter((cycle) => cycle.lrv_id === item.lrv_id && cycle.forecast_days !== null && Number(cycle.forecast_days) <= Number(item.forecast_days) + 2).map((cycle) => Number(cycle.cycle_type))
+    const primaryCycle = Math.max(Number(item.cycle_type), ...approaching)
+    const cycles = state.data.rules.filter((rule) => Number(rule.cycle_type) <= primaryCycle).map((rule) => Number(rule.cycle_type))
+    const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle)
     const bay = state.data.bays.find((candidate) => candidate.active && (candidate.bay_type === rule?.compatible_bay_type || candidate.bay_type === 'universal')) || state.data.bays.find((candidate) => candidate.active)
-    setForm({ ...emptyForm, lrvId: item.lrv_id, primaryCycle: item.cycle_type, bundledCycles: cycles.length ? cycles : [Number(item.cycle_type)], bayId: bay?.bay_id || '', date: singaporeDate(Math.max(1, Math.min(6, Number(item.forecast_days || 1)))), notes: cycles.length > 1 ? `Bundle ${cycles.map(cycleLabel).join(' + ')} in one depot visit` : `${cycleLabel(item.cycle_type)} forecast-based recall` })
+    setForm({ ...emptyForm, lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, bayId: bay?.bay_id || '', date: singaporeDate(Math.max(1, Math.min(6, Number(item.forecast_days || 1)))), notes: approaching.length > 1 ? `Bundle approaching work in one ${cycleLabel(primaryCycle)} visit` : `${cycleLabel(primaryCycle)} forecast-based recall` })
     setEditing(true)
   }
 
@@ -47,13 +49,25 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   }
 
   const complete = async (booking) => {
-    const fallback = state.data.vehicles.find((row) => row.lrv_id === booking.lrv_id)
-    const entered = globalThis.prompt(`Enter the definite hubometer reading for ${booking.lrv_id}:`, fallback?.odo_km || '')
+    const fallback = state.data.mileage.find((row) => row.lrv_id === booking.lrv_id)
+    const entered = globalThis.prompt(`Enter the definite hubometer reading for ${booking.lrv_id}:`, fallback?.lifetime_planning_mileage_km || fallback?.device_odo_km || '')
     if (!entered) return
+    if (!Number.isFinite(Number(entered)) || Number(entered) < 0) {
+      setToast({ message: 'Enter a valid non-negative hubometer reading.', tone: 'danger' }); return
+    }
     setSaving(true)
     try {
       await completeMaintenance({ lrvId: booking.lrv_id, primaryCycle: booking.primary_cycle, mileageKm: entered, technicianId: 'TECH_DEMO', bookingId: booking.id, notes: booking.notes })
       setToast({ message: `${cycleLabel(booking.primary_cycle)} completed. Nested cycles were reset atomically.`, tone: 'success' }); state.refresh(true)
+    } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
+  }
+
+  const cancelBooking = async () => {
+    if (!form.bookingId || !globalThis.confirm(`Cancel the ${form.lrvId} maintenance booking?`)) return
+    setSaving(true)
+    try {
+      await cancelMaintenanceBooking(form.bookingId)
+      setToast({ message: `${form.lrvId} booking cancelled.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
     } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
   }
 
@@ -89,14 +103,14 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         {editing && <div className="modal-backdrop" onMouseDown={() => setEditing(false)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="eyebrow">Forecast-based planning</div><h2>{form.bookingId ? 'Adjust booking' : 'Create maintenance booking'}</h2></div><button onClick={() => setEditing(false)}>×</button></div>
           <form onSubmit={submit} className="form-grid">
             <label>Vehicle<select value={form.lrvId} required onChange={(e) => setForm({ ...form, lrvId: e.target.value })}><option value="">Select LRV</option>{state.data.vehicles.map((vehicle) => <option key={vehicle.lrv_id}>{vehicle.lrv_id}</option>)}</select></label>
-            <label>Primary cycle<select value={form.primaryCycle} onChange={(e) => setForm({ ...form, primaryCycle: Number(e.target.value), bundledCycles: [Number(e.target.value)] })}>{state.data.rules.map((rule) => <option key={rule.cycle_type} value={rule.cycle_type}>{cycleLabel(rule.cycle_type)}</option>)}</select></label>
+            <label>Primary cycle<select value={form.primaryCycle} onChange={(e) => { const primaryCycle = Number(e.target.value); setForm({ ...form, primaryCycle, bundledCycles: state.data.rules.filter((rule) => Number(rule.cycle_type) <= primaryCycle).map((rule) => Number(rule.cycle_type)) }) }}>{state.data.rules.map((rule) => <option key={rule.cycle_type} value={rule.cycle_type}>{cycleLabel(rule.cycle_type)}</option>)}</select></label>
             <label>Depot bay<select value={form.bayId} required onChange={(e) => setForm({ ...form, bayId: e.target.value })}><option value="">Select compatible bay</option>{state.data.bays.filter((bay) => bay.active).map((bay) => <option key={bay.bay_id} value={bay.bay_id}>{bay.name}</option>)}</select></label>
             <label>Status<select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="proposed">Proposed</option><option value="confirmed">Confirmed</option></select></label>
             <label>Date<input type="date" value={form.date} min={singaporeDate()} required onChange={(e) => setForm({ ...form, date: e.target.value })}/></label>
             <label>Start time<input type="time" value={form.time} required onChange={(e) => setForm({ ...form, time: e.target.value })}/></label>
-            <fieldset className="form-span"><legend>Complete in this visit</legend><div className="cycle-checks">{state.data.rules.filter((rule) => Number(rule.cycle_type) <= Number(form.primaryCycle)).map((rule) => <label key={rule.cycle_type}><input type="checkbox" checked={form.bundledCycles.includes(Number(rule.cycle_type))} onChange={(e) => setForm({ ...form, bundledCycles: e.target.checked ? [...new Set([...form.bundledCycles, Number(rule.cycle_type)])] : form.bundledCycles.filter((cycle) => cycle !== Number(rule.cycle_type)) })}/>{cycleLabel(rule.cycle_type)}</label>)}</div></fieldset>
+            <fieldset className="form-span"><legend>Nested cycles completed in this visit</legend><div className="cycle-checks">{state.data.rules.filter((rule) => Number(rule.cycle_type) <= Number(form.primaryCycle)).map((rule) => <label key={rule.cycle_type}><input type="checkbox" checked readOnly/>{cycleLabel(rule.cycle_type)}</label>)}</div></fieldset>
             <label className="form-span">Planning note<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}/></label>
-            <div className="modal-actions form-span"><button type="button" className="button button-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking capacity…' : 'Save booking'}</button></div>
+            <div className="modal-actions form-span">{form.bookingId && <button type="button" className="button button-secondary" disabled={saving} onClick={cancelBooking}>Cancel booking</button>}<button type="button" className="button button-secondary" onClick={() => setEditing(false)}>Close</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking capacity…' : 'Save booking'}</button></div>
           </form></div></div>}
       </>}
     </DataBoundary>
@@ -122,12 +136,13 @@ function buildMaintenanceModel(data) {
 }
 
 function dayOffset(value) {
-  return Math.round((new Date(value) - new Date(`${singaporeDate()}T00:00:00+08:00`)) / 86400000)
+  const bookingDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(value))
+  return Math.round((new Date(`${bookingDate}T00:00:00+08:00`) - new Date(`${singaporeDate()}T00:00:00+08:00`)) / 86400000)
 }
 
 function ScheduleRow({ bay, days, bookings, onEdit, onComplete }) {
   return <><div className="schedule-label"><strong>{bay.name}</strong><small>{bay.opens_at.slice(0, 5)}–{bay.closes_at.slice(0, 5)}</small></div>{days.map((day) => {
     const items = bookings.filter((booking) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(booking.start_at)) === day && booking.bay_id === bay.bay_id && booking.status !== 'cancelled')
-    return <div className="schedule-cell" key={`${bay.bay_id}-${day}`}>{items.map((booking) => <div className={`booking booking-${booking.status}`} key={booking.id}><button onClick={() => onEdit(booking)}><strong>{booking.lrv_id} · {cycleLabel(booking.primary_cycle)}</strong><span>{formatTime(booking.start_at)}–{formatTime(booking.end_at)}</span><Badge value={booking.status}/></button>{booking.status === 'confirmed' && <button className="complete-link" onClick={() => onComplete(booking)}>Complete</button>}</div>)}</div>
+    return <div className="schedule-cell" key={`${bay.bay_id}-${day}`}>{items.map((booking) => <div className={`booking booking-${booking.status}`} key={booking.id}><button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}><strong>{booking.lrv_id} · {cycleLabel(booking.primary_cycle)}</strong><span>{formatTime(booking.start_at)}–{formatTime(booking.end_at)}</span><Badge value={booking.status}/></button>{booking.status === 'confirmed' && <button className="complete-link" onClick={() => onComplete(booking)}>Complete</button>}</div>)}</div>
   })}</>
 }

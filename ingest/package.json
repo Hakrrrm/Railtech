@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node index.js",
     "simulate": "node simulator.js",
-    "test": "node test_index.js && node test_simulator.js"
+    "test": "node test_index.js && node test_simulator.js",
+    "test:mqtt": "node test_mqtt_roundtrip.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

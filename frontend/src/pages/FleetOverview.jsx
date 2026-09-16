@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { loadFleetOverview } from '../lib/api'
-import { daysFromToday, forecastLabel, formatDate, formatKm } from '../lib/format'
+import { daysFromToday, forecastLabel, formatDate, formatKm, singaporeDate } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -8,7 +8,7 @@ import { Icon } from '../components/Icons'
 const subscriptions = [
   { table: 'vehicles' }, { table: 'segment_traversals', event: 'INSERT' },
   { table: 'mileage_anchors', event: 'INSERT' }, { table: 'cycle_state' },
-  { table: 'maintenance_bookings' },
+  { table: 'maintenance_bookings' }, { table: 'planning_settings' },
 ]
 
 export function FleetOverview({ navigate, reportUpdatedAt }) {
@@ -65,27 +65,27 @@ function buildModel(data) {
   })
   const summaries = new Map(data.mileage.map((row) => [row.lrv_id, row]))
   const combined = data.vehicles.map((vehicle) => ({ ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}) }))
-  const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > 12)
+  const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
+  const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
   const dueSoon = combined.filter((row) => row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7)
-  const checks = combined.filter((row) => Number(row.telemetry_age_hours) > 12 || Math.abs(Number(row.divergence_km || 0)) >= 50).length
-  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row) })).sort((a, b) => Number(b.priority_score || 0) - Number(a.priority_score || 0)).slice(0, 8)
+  const checks = combined.filter((row) => Number(row.telemetry_age_hours) > staleAfterHours || Math.abs(Number(row.divergence_km || 0)) >= 50).length
+  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours) })).sort((a, b) => Number(b.priority_score || 0) - Number(a.priority_score || 0)).slice(0, 8)
   const leading = priority[0] || {}
   const next = leading.status === 'faulty'
     ? { status: 'faulty', title: `Replace ${leading.lrv_id} at the next handover`, description: leading.reason, reason: 'A controlled stock change keeps the service slot covered while the faulty LRV returns to depot.', button: 'Open deployment plan', destination: 'deployment' }
     : { title: `Reserve a depot slot for ${leading.lrv_id || 'the next recall'}`, description: leading.reason || 'Review the upcoming maintenance forecast.', reason: 'Booking against forecast days gives planners time to bundle work and protect fleet availability.', button: 'Open maintenance plan', destination: 'maintenance' }
   const outlook = Array.from({ length: 14 }, (_, offset) => {
-    const date = new Date(); date.setDate(date.getDate() + offset)
-    const iso = date.toISOString().slice(0, 10)
+    const iso = singaporeDate(offset)
     return { date: iso, count: data.forecasts.filter((cycle) => cycle.forecast_date && daysFromToday(cycle.forecast_date) === offset).length }
   })
   return { attention, dueSoon, checks, priority, next, outlook, spares: combined.filter((row) => row.status === 'idle').length }
 }
 
-function reasonFor(row) {
+function reasonFor(row, staleAfterHours) {
   if (row.status === 'faulty') return row.lrv_id === 'D29' ? 'Brake pressure fault · withdraw from service' : 'Fault reported · telemetry also stale'
   if (Number(row.km_to_next) <= 0) return `${row.cycle_type / 1000}K cycle overdue`
   if (Math.abs(Number(row.divergence_km || 0)) >= 50) return 'Physical and device mileage need review'
-  if (Number(row.telemetry_age_hours) > 12) return 'Telemetry is stale'
+  if (Number(row.telemetry_age_hours) > staleAfterHours) return 'Telemetry is stale'
   if (row.forecast_days !== null && Number(row.forecast_days) <= 2) return `${row.cycle_type / 1000}K maintenance approaching`
   if (row.status === 'maintenance') return 'Currently occupying a depot slot'
   return 'Healthy · monitor forecast'

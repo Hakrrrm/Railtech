@@ -1680,7 +1680,8 @@ static void gnss_matcher_task(void *arg)
          * is exactly what's wanted). */
         uint32_t mono_now_s = (uint32_t)(millis() / 1000);
 
-        char lat_s[16], lon_s[16], alt_s[12];
+        /* int32 fixed-point worst case needs 13 bytes including the NUL. */
+        char lat_s[16], lon_s[16], alt_s[16];
         char pdop_s[8], hdop_s[8], vdop_s[8];
         char date_s[11], time_s[9];
 
