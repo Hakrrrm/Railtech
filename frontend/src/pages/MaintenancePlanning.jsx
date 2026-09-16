@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cancelMaintenanceBooking, completeMaintenance, loadMaintenancePlanning, scheduleMaintenance } from '../lib/api'
-import { cycleLabel, forecastLabel, formatDate, formatDateTimeRange, formatDuration, formatKm, formatTime, singaporeDate } from '../lib/format'
+import { cycleLabel, forecastLabel, formatDate, formatDateTimeRange, formatDuration, formatKm, formatTime, singaporeDate, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -45,7 +45,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       const start = new Date(`${form.date}T${form.time}:00+08:00`)
       const end = new Date(start.getTime() + Number(rule?.duration_minutes || 90) * 60000)
       await scheduleMaintenance({ ...form, startAt: start.toISOString(), endAt: end.toISOString() })
-      setToast({ message: `${form.lrvId} booking ${form.bookingId ? 'updated' : 'created'}.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
+      setToast({ message: `${vehicleLabel(form.lrvId)} booking ${form.bookingId ? 'updated' : 'created'}.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
     } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
   }
 
@@ -80,11 +80,11 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   }
 
   const cancelBooking = async () => {
-    if (!form.bookingId || !globalThis.confirm(`Cancel the ${form.lrvId} maintenance booking?`)) return
+    if (!form.bookingId || !globalThis.confirm(`Cancel the ${vehicleLabel(form.lrvId)} maintenance booking?`)) return
     setSaving(true)
     try {
       await cancelMaintenanceBooking(form.bookingId)
-      setToast({ message: `${form.lrvId} booking cancelled.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
+      setToast({ message: `${vehicleLabel(form.lrvId)} booking cancelled.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
     } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
   }
 
@@ -102,18 +102,18 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         <div className="maintenance-layout">
           <Card title="Recall queue" eyebrow="Ranked by urgency and serviceability">
             <div className="recall-list">{model.queue.map((item, index) => <button key={item.lrv_id} onClick={() => suggest(item)}>
-              <span className={`queue-rank ${index < 2 ? 'urgent' : ''}`}>{index + 1}</span><span><strong>{item.lrv_id} · {cycleLabel(item.cycle_type)}</strong><small>{item.status === 'maintenance' ? 'Already in depot' : forecastLabel(item.forecast_days)}</small></span><span><b>{formatKm(item.km_to_next)}</b><small>{item.status.replace('_', ' ')}</small></span><Icon name="chevron"/>
+              <span className={`queue-rank ${index < 2 ? 'urgent' : ''}`}>{index + 1}</span><span><strong>{vehicleLabel(item.lrv_id)} · {cycleLabel(item.cycle_type)}</strong><small>{item.status === 'maintenance' ? 'Already in depot' : forecastLabel(item.forecast_days)}</small></span><span><b>{formatKm(item.km_to_next)}</b><small>{item.status.replace('_', ' ')}</small></span><Icon name="chevron"/>
             </button>)}</div>
           </Card>
           <Card title="Suggested recall" eyebrow="Best available intervention">
-            <div className="suggestion-hero"><span><Icon name="wrench" size={26}/></span><div><small>Recommended next</small><h3>{model.queue[0]?.lrv_id} · {cycleLabel(model.queue[0]?.cycle_type)}</h3><p>{model.queue[0]?.lrv_id === 'D18' ? 'Complete the overdue 2K inspection already booked in Bay 1.' : 'Reserve the earliest compatible bay before the forecast window closes.'}</p></div></div>
+            <div className="suggestion-hero"><span><Icon name="wrench" size={26}/></span><div><small>Recommended next</small><h3>{vehicleLabel(model.queue[0]?.lrv_id)} · {cycleLabel(model.queue[0]?.cycle_type)}</h3><p>{model.queue[0]?.lrv_id === 'D18' ? 'Complete the overdue 2K inspection already booked in Bay 1.' : 'Reserve the earliest compatible bay before the forecast window closes.'}</p></div></div>
             <div className="reason-box"><strong>Decision factors</strong><span>Forecast urgency · standard package scope · continuous bay occupancy · minimum service fleet</span></div>
             {model.queue[0] && <button className="button button-primary button-full" onClick={() => suggest(model.queue[0])}>Review suggested slot</button>}
           </Card>
         </div>
 
         {model.longStays.length > 0 && <Card title="Long depot commitments" eyebrow="Continuous bay occupation · weekends and waiting time included">
-          <div className="long-stay-list">{model.longStays.map((booking) => <article key={booking.id}><div><strong>{booking.lrv_id} · {cycleLabel(booking.primary_cycle)} package</strong><small>{booking.bundled_cycles.map(cycleLabel).join(' + ')}</small></div><div><b>{formatDuration((new Date(booking.end_at) - new Date(booking.start_at)) / 60000)}</b><small>{formatDateTimeRange(booking.start_at, booking.end_at)}</small></div><Badge value={booking.status}/></article>)}</div>
+          <div className="long-stay-list">{model.longStays.map((booking) => <article key={booking.id}><div><strong>{vehicleLabel(booking.lrv_id)} · {cycleLabel(booking.primary_cycle)} package</strong><small>{booking.bundled_cycles.map(cycleLabel).join(' + ')}</small></div><div><b>{formatDuration((new Date(booking.end_at) - new Date(booking.start_at)) / 60000)}</b><small>{formatDateTimeRange(booking.start_at, booking.end_at)}</small></div><Badge value={booking.status}/></article>)}</div>
         </Card>}
 
         <Card title="Weekly depot schedule" eyebrow="Two-bay continuous occupancy · multi-day visits appear on every affected day">
@@ -123,7 +123,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
 
         {editing && <div className="modal-backdrop" onMouseDown={() => setEditing(false)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="eyebrow">Forecast-based planning</div><h2>{form.bookingId ? 'Adjust booking' : 'Create maintenance booking'}</h2></div><button onClick={() => setEditing(false)}>×</button></div>
           <form onSubmit={submit} className="form-grid">
-            <label>Vehicle<select value={form.lrvId} required onChange={(e) => setForm({ ...form, lrvId: e.target.value })}><option value="">Select LRV</option>{state.data.vehicles.map((vehicle) => <option key={vehicle.lrv_id}>{vehicle.lrv_id}</option>)}</select></label>
+            <label>Vehicle<select value={form.lrvId} required onChange={(e) => setForm({ ...form, lrvId: e.target.value })}><option value="">Select LRV</option>{state.data.vehicles.map((vehicle) => <option key={vehicle.lrv_id} value={vehicle.lrv_id}>{vehicleLabel(vehicle.lrv_id)}</option>)}</select></label>
             <label>Primary cycle<select value={form.primaryCycle} onChange={(e) => { const primaryCycle = Number(e.target.value); const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle); setForm({ ...form, primaryCycle, bundledCycles: rule?.included_cycles?.map(Number) || [primaryCycle] }) }}>{state.data.rules.map((rule) => <option key={rule.cycle_type} value={rule.cycle_type}>{cycleLabel(rule.cycle_type)}</option>)}</select></label>
             <label>Depot bay<select value={form.bayId} required onChange={(e) => setForm({ ...form, bayId: e.target.value })}><option value="">Select compatible bay</option>{state.data.bays.filter((bay) => bay.active).map((bay) => <option key={bay.bay_id} value={bay.bay_id}>{bay.name}</option>)}</select></label>
             <label>Status<select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="proposed">Proposed</option><option value="confirmed">Confirmed</option></select></label>
@@ -135,7 +135,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
             <div className="modal-actions form-span">{form.bookingId && <button type="button" className="button button-secondary" disabled={saving} onClick={cancelBooking}>Cancel booking</button>}<button type="button" className="button button-secondary" onClick={() => setEditing(false)}>Close</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking capacity…' : 'Save booking'}</button></div>
           </form></div></div>}
 
-        {completion && <div className="modal-backdrop" onMouseDown={() => setCompletion(null)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="eyebrow">Technician completion record</div><h2>{completion.booking.lrv_id} · {cycleLabel(completion.booking.primary_cycle)} visit</h2></div><button onClick={() => setCompletion(null)}>×</button></div>
+        {completion && <div className="modal-backdrop" onMouseDown={() => setCompletion(null)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><div><div className="eyebrow">Technician completion record</div><h2>{vehicleLabel(completion.booking.lrv_id)} · {cycleLabel(completion.booking.primary_cycle)} visit</h2></div><button onClick={() => setCompletion(null)}>×</button></div>
           <form onSubmit={submitCompletion} className="form-grid">
             <label>Definite hubometer reading (km)<input type="number" min="0" step="0.1" required value={completion.mileageKm} onChange={(event) => setCompletion({ ...completion, mileageKm: event.target.value })}/></label>
             <label>Technician ID<input required value={completion.technicianId} onChange={(event) => setCompletion({ ...completion, technicianId: event.target.value })}/></label>
@@ -174,6 +174,6 @@ function ScheduleRow({ bay, days, bookings, onEdit, onComplete }) {
   return <><div className="schedule-label"><strong>{bay.name}</strong><small>{bay.opens_at.slice(0, 5)}–{bay.closes_at.slice(0, 5)}</small></div>{days.map((day) => {
     const dayStart = new Date(`${day}T00:00:00+08:00`); const dayEnd = new Date(dayStart.getTime() + 86400000)
     const items = bookings.filter((booking) => new Date(booking.start_at) < dayEnd && new Date(booking.end_at) > dayStart && booking.bay_id === bay.bay_id && booking.status !== 'cancelled')
-    return <div className="schedule-cell" key={`${bay.bay_id}-${day}`}>{items.map((booking) => { const startsToday = new Date(booking.start_at) >= dayStart; const endsToday = new Date(booking.end_at) <= dayEnd; const timing = startsToday && endsToday ? `${formatTime(booking.start_at)}–${formatTime(booking.end_at)}` : startsToday ? `Starts ${formatTime(booking.start_at)}` : endsToday ? `Ends ${formatTime(booking.end_at)}` : 'Occupied all day'; return <div className={`booking booking-${booking.status}`} key={booking.id}><button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}><strong>{booking.lrv_id} · {cycleLabel(booking.primary_cycle)}</strong><span>{timing}</span><Badge value={booking.status}/></button>{booking.status === 'confirmed' && endsToday && <button className="complete-link" onClick={() => onComplete(booking)}>Record completion</button>}</div> })}</div>
+    return <div className="schedule-cell" key={`${bay.bay_id}-${day}`}>{items.map((booking) => { const startsToday = new Date(booking.start_at) >= dayStart; const endsToday = new Date(booking.end_at) <= dayEnd; const timing = startsToday && endsToday ? `${formatTime(booking.start_at)}–${formatTime(booking.end_at)}` : startsToday ? `Starts ${formatTime(booking.start_at)}` : endsToday ? `Ends ${formatTime(booking.end_at)}` : 'Occupied all day'; return <div className={`booking booking-${booking.status}`} key={booking.id}><button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}><strong>{vehicleLabel(booking.lrv_id)} · {cycleLabel(booking.primary_cycle)}</strong><span>{timing}</span><Badge value={booking.status}/></button>{booking.status === 'confirmed' && endsToday && <button className="complete-link" onClick={() => onComplete(booking)}>Record completion</button>}</div> })}</div>
   })}</>
 }

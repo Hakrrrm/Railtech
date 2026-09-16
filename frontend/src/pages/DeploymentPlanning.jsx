@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { confirmStockChange, loadDeploymentPlanning, selectStockReplacement } from '../lib/api'
-import { cycleLabel, formatDate, formatDuration, formatKm, formatTime, statusLabel } from '../lib/format'
+import { cycleLabel, formatDate, formatDuration, formatKm, formatTime, statusLabel, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -19,13 +19,13 @@ export function DeploymentPlanning({ navigate, reportUpdatedAt }) {
 
   const choose = async (change, lrvId) => {
     setSaving(true)
-    try { await selectStockReplacement(change.id, lrvId); setToast({ message: `${lrvId} selected as the replacement.`, tone: 'success' }); state.refresh(true) }
+    try { await selectStockReplacement(change.id, lrvId); setToast({ message: `${vehicleLabel(lrvId)} selected as the replacement.`, tone: 'success' }); state.refresh(true) }
     catch (error) { setToast({ message: error.message, tone: 'danger' }) }
     finally { setSaving(false) }
   }
   const confirm = async (change) => {
     setSaving(true)
-    try { await confirmStockChange(change.id); setToast({ message: `Stock change confirmed: ${change.withdrawn_lrv_id} → ${change.replacement_lrv_id}.`, tone: 'success' }); state.refresh(true) }
+    try { await confirmStockChange(change.id); setToast({ message: `Stock change confirmed: ${vehicleLabel(change.withdrawn_lrv_id)} → ${vehicleLabel(change.replacement_lrv_id)}.`, tone: 'success' }); state.refresh(true) }
     catch (error) { setToast({ message: error.message, tone: 'danger' }) }
     finally { setSaving(false) }
   }
@@ -44,21 +44,21 @@ export function DeploymentPlanning({ navigate, reportUpdatedAt }) {
         <div className="deployment-grid">
           <Card title="Five-hour duty timeline" eyebrow="Current operating window">
             <div className="timeline-head"><span>Vehicle / slot</span>{model.hours.map((hour) => <b key={hour.toISOString()}>{formatTime(hour)}</b>)}</div>
-            <div className="timeline-body">{model.assignments.slice(0, 12).map((assignment) => <div className="timeline-row" key={assignment.id}><div><strong>{assignment.lrv_id}</strong><small>{assignment.slot_label} · {assignment.loop_id.replace('Sengkang ', '')}</small></div><div className="timeline-track"><span className={`duty-bar duty-${assignment.vehicleStatus === 'faulty' ? 'withdrawn' : assignment.status}`} style={assignmentStyle(assignment, model.windowStart, model.windowEnd)}>{assignment.vehicleStatus === 'faulty' ? 'Fault · withdraw' : statusLabel(assignment.status)}</span></div></div>)}</div>
+            <div className="timeline-body">{model.assignments.slice(0, 12).map((assignment) => <div className="timeline-row" key={assignment.id}><div><strong>{vehicleLabel(assignment.lrv_id)}</strong><small>{assignment.slot_label} · {assignment.loop_id.replace('Sengkang ', '')}</small></div><div className="timeline-track"><span className={`duty-bar duty-${assignment.vehicleStatus === 'faulty' ? 'withdrawn' : assignment.status}`} style={assignmentStyle(assignment, model.windowStart, model.windowEnd)}>{assignment.vehicleStatus === 'faulty' ? 'Fault · withdraw' : statusLabel(assignment.status)}</span></div></div>)}</div>
           </Card>
 
           <Card title="Stock-change recommendation" eyebrow="Service-preserving response" className="stock-card">
-            {model.proposal ? <><div className="fault-callout"><span><Icon name="alert"/></span><div><strong>{model.proposal.withdrawn_lrv_id} · brake-related withdrawal</strong><p>{model.proposal.reason}</p></div></div>
-              <div className="swap-visual"><div><small>Withdraw</small><strong>{model.proposal.withdrawn_lrv_id}</strong></div><span>→</span><div className="replacement"><small>Inject reserve</small><strong>{model.proposal.replacement_lrv_id}</strong></div></div>
+            {model.proposal ? <><div className="fault-callout"><span><Icon name="alert"/></span><div><strong>{vehicleLabel(model.proposal.withdrawn_lrv_id)} · brake-related withdrawal</strong><p>{model.proposal.reason}</p></div></div>
+              <div className="swap-visual"><div><small>Withdraw</small><strong>{vehicleLabel(model.proposal.withdrawn_lrv_id)}</strong></div><span>→</span><div className="replacement"><small>Inject reserve</small><strong>{vehicleLabel(model.proposal.replacement_lrv_id)}</strong></div></div>
               <div className="reason-box"><strong>Projected duty</strong><span>{formatKm(model.proposal.projected_duty_km)} · replacement retains the configured maintenance safety margin.</span></div>
-              <button disabled={saving} className="button button-primary button-full" onClick={() => confirm(model.proposal)}>{saving ? 'Validating…' : `Confirm ${model.proposal.withdrawn_lrv_id} → ${model.proposal.replacement_lrv_id}`}</button>
+              <button disabled={saving} className="button button-primary button-full" onClick={() => confirm(model.proposal)}>{saving ? 'Validating…' : `Confirm ${vehicleLabel(model.proposal.withdrawn_lrv_id)} → ${vehicleLabel(model.proposal.replacement_lrv_id)}`}</button>
             </> : <div className="nominal"><Icon name="shield" size={34}/><h3>No stock change pending</h3><p>All active duties currently have coverage.</p></div>}
           </Card>
         </div>
 
         <Card title="Replacement alternatives" eyebrow="Ranked by serviceability, booking conflicts, maintenance margin and wear balance" action={<button className="text-button" onClick={() => navigate('maintenance')}>View depot bookings <Icon name="chevron"/></button>}>
           <div className="table-wrap"><table><thead><tr><th>Rank</th><th>Vehicle</th><th>Availability</th><th>Maintenance margin</th><th>Next depot commitment</th><th>After projected duty</th><th/></tr></thead><tbody>
-            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{item.lrv_id}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={availabilityLabel(item)} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{item.nextBooking ? <><strong>{formatDate(item.nextBooking.start_at)} · {cycleLabel(item.nextBooking.primary_cycle)}</strong><small>{formatDuration((new Date(item.nextBooking.end_at) - new Date(item.nextBooking.start_at)) / 60000)}</small></> : 'None planned'}</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
+            {model.alternatives.slice(0, 8).map((item, index) => <tr key={item.lrv_id}><td><span className={`queue-rank ${index === 0 ? 'recommended' : ''}`}>{index + 1}</span></td><td><strong>{vehicleLabel(item.lrv_id)}</strong><small>{statusLabel(item.status)}</small></td><td><Badge value={availabilityLabel(item)} tone={item.eligible ? 'success' : 'muted'}/></td><td>{formatKm(item.nearest_cycle_margin_km)}</td><td>{item.nextBooking ? <><strong>{formatDate(item.nextBooking.start_at)} · {cycleLabel(item.nextBooking.primary_cycle)}</strong><small>{formatDuration((new Date(item.nextBooking.end_at) - new Date(item.nextBooking.start_at)) / 60000)}</small></> : 'None planned'}</td><td><strong>{formatKm(Number(item.available_duty_margin_km) - Number(model.proposal?.projected_duty_km || 0))}</strong></td><td>{model.proposal && <button className="button button-small button-secondary" disabled={!item.eligible || saving || item.lrv_id === model.proposal.replacement_lrv_id} onClick={() => choose(model.proposal, item.lrv_id)}>{item.lrv_id === model.proposal.replacement_lrv_id ? 'Selected' : 'Choose'}</button>}</td></tr>)}
           </tbody></table></div>
         </Card>
       </>}

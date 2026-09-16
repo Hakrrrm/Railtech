@@ -97,6 +97,12 @@ export function statusLabel(status) {
   }[status] || status || 'Unknown'
 }
 
+export function vehicleLabel(lrvId) {
+  const value = String(lrvId || '')
+  const match = /^D(\d{2})$/.exec(value)
+  return match ? `V${match[1]}` : value || '—'
+}
+
 export function cycleLabel(cycle) {
   return Number(cycle) >= 1000 ? `${Number(cycle) / 1000}K` : String(cycle)
 }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { loadEvidence } from '../lib/api'
-import { cycleLabel, formatDateTime, formatKm } from '../lib/format'
+import { cycleLabel, formatDateTime, formatKm, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -33,9 +33,9 @@ export function Evidence({ navigate, reportUpdatedAt }) {
 
 function buildEvidence(data, filter, search) {
   if (!data) return null
-  const anchors = data.anchors.map((row) => ({ key: `a-${row.id}`, type: 'mileage', lrvId: row.lrv_id, time: row.ts, actor: row.technician_id || row.source, title: `${row.lrv_id} physical reading · ${formatKm(row.value_km, 1)}`, description: `Compared with ${formatKm(row.gnss_odo_km, 1)} device mileage; divergence ${formatKm(row.divergence_km, 1)}.${row.override_reason ? ` ${row.override_reason}.` : ''}`, badge: row.superseded_by ? 'Superseded' : row.override ? 'Override' : 'Accepted' }))
-  const events = data.events.map((row) => { const planned = data.rules.find((rule) => Number(rule.cycle_type) === Number(row.primary_cycle))?.included_cycles || [row.primary_cycle]; const partial = planned.some((cycle) => !row.reset_cycles.map(Number).includes(Number(cycle))); return { key: `m-${row.id}`, type: 'maintenance', lrvId: row.lrv_id, time: row.completed_at, actor: row.technician_id, title: `${row.lrv_id} closed ${cycleLabel(row.primary_cycle)} visit`, description: `${formatKm(row.completion_mileage_km, 1)} definite reading; technician confirmed ${row.reset_cycles.map(cycleLabel).join(', ')}. ${row.notes || ''}`, badge: partial ? 'Partial scope' : 'Completed' } })
-  const changes = data.changes.map((row) => ({ key: `s-${row.id}`, type: 'deployment', lrvId: row.withdrawn_lrv_id, time: row.decided_at || row.created_at, actor: row.decided_by || 'OCC planner', title: `${row.withdrawn_lrv_id} → ${row.replacement_lrv_id} stock change`, description: `${row.reason} Projected duty ${formatKm(row.projected_duty_km)}.`, badge: row.decision_status }))
+  const anchors = data.anchors.map((row) => ({ key: `a-${row.id}`, type: 'mileage', lrvId: row.lrv_id, time: row.ts, actor: row.technician_id || row.source, title: `${vehicleLabel(row.lrv_id)} physical reading · ${formatKm(row.value_km, 1)}`, description: `Compared with ${formatKm(row.gnss_odo_km, 1)} device mileage; divergence ${formatKm(row.divergence_km, 1)}.${row.override_reason ? ` ${row.override_reason}.` : ''}`, badge: row.superseded_by ? 'Superseded' : row.override ? 'Override' : 'Accepted' }))
+  const events = data.events.map((row) => { const planned = data.rules.find((rule) => Number(rule.cycle_type) === Number(row.primary_cycle))?.included_cycles || [row.primary_cycle]; const partial = planned.some((cycle) => !row.reset_cycles.map(Number).includes(Number(cycle))); return { key: `m-${row.id}`, type: 'maintenance', lrvId: row.lrv_id, time: row.completed_at, actor: row.technician_id, title: `${vehicleLabel(row.lrv_id)} closed ${cycleLabel(row.primary_cycle)} visit`, description: `${formatKm(row.completion_mileage_km, 1)} definite reading; technician confirmed ${row.reset_cycles.map(cycleLabel).join(', ')}. ${row.notes || ''}`, badge: partial ? 'Partial scope' : 'Completed' } })
+  const changes = data.changes.map((row) => ({ key: `s-${row.id}`, type: 'deployment', lrvId: row.withdrawn_lrv_id, time: row.decided_at || row.created_at, actor: row.decided_by || 'OCC planner', title: `${vehicleLabel(row.withdrawn_lrv_id)} → ${vehicleLabel(row.replacement_lrv_id)} stock change`, description: `${row.reason} Projected duty ${formatKm(row.projected_duty_km)}.`, badge: row.decision_status }))
   const all = [...anchors, ...events, ...changes].sort((a, b) => new Date(b.time) - new Date(a.time))
   return { total: all.length, superseded: data.anchors.filter((row) => row.superseded_by).length, items: all.filter((item) => (filter === 'all' || item.type === filter) && (!search || item.title.includes(search))).slice(0, 80) }
 }

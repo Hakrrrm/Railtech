@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, statusLabel } from './format'
+import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, statusLabel, vehicleLabel } from './format'
 
 describe('operator-facing formatting', () => {
   it('translates distances and cycles into scan-friendly labels', () => {
     expect(formatKm(128473.94, 1)).toBe('128,473.9 km')
     expect(cycleLabel(40000)).toBe('40K')
+    expect(vehicleLabel('D07')).toBe('V07')
+    expect(vehicleLabel('LRV-A')).toBe('LRV-A')
   })
 
   it('prioritises days and makes missing forecasts explicit', () => {

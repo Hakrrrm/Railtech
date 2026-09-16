@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { loadVehicleDetail } from '../lib/api'
-import { cycleLabel, forecastLabel, formatDateTime, formatDateTimeRange, formatDuration, formatKm, qualityLabel, statusLabel } from '../lib/format'
+import { cycleLabel, forecastLabel, formatDateTime, formatDateTimeRange, formatDuration, formatKm, qualityLabel, statusLabel, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Progress } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -25,7 +25,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
 
   return <>
     <button className="back-link" onClick={() => navigate('fleet')}><Icon name="arrow"/>Back to fleet overview</button>
-    <PageHeader eyebrow="Vehicle record" title={lrvId} description="Reconciled mileage, maintenance exposure and completed segment evidence." actions={data?.summary && <Badge value={data.summary.status}/>}/>
+    <PageHeader eyebrow="Vehicle record" title={vehicleLabel(lrvId)} description="Reconciled mileage, maintenance exposure and completed segment evidence." actions={data?.summary && <Badge value={data.summary.status}/>}/>
     <DataBoundary loading={state.loading} error={state.error} empty={!data?.summary} onRetry={state.refresh}>
       {data?.summary && <>
         <div className="metric-grid metric-grid-three">
