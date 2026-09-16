@@ -46,8 +46,8 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
           })}</div>
         </Card>
 
-        {data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status)).map((booking) => <Card key={booking.id} title="Planned depot stay" eyebrow="Continuous bay occupation · weekends and waiting time included">
-          <div className="planned-stay"><div><span>Package</span><strong>{cycleLabel(booking.primary_cycle)}</strong><small>Includes {booking.bundled_cycles.map(cycleLabel).join(' + ')}</small></div><div><span>Occupancy</span><strong>{formatDuration((new Date(booking.end_at) - new Date(booking.start_at)) / 60000)}</strong><small>{formatDateTimeRange(booking.start_at, booking.end_at)}</small></div><Badge value={booking.status}/></div>
+        {data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status)).map((booking) => <Card key={booking.id} title="Planned depot stay">
+          <div className="planned-stay"><div><span>Work</span><strong>{booking.work_type === 'corrective' ? 'Corrective repair' : cycleLabel(booking.primary_cycle)}</strong><small>{booking.work_type === 'corrective' ? booking.notes || 'Fault repair' : `Includes ${booking.bundled_cycles.map(cycleLabel).join(' + ')}`}</small></div><div><span>Occupancy</span><strong>{formatDuration((new Date(booking.end_at) - new Date(booking.start_at)) / 60000)}</strong><small>{formatDateTimeRange(booking.start_at, booking.end_at)}</small></div><Badge value={booking.status}/></div>
         </Card>)}
 
         <div className="detail-grid">
@@ -68,7 +68,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
 
         <Card title="Maintenance log" eyebrow="Technician-confirmed work and definite completion mileage">
           {data.events.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Planned package</th><th>Physical reading</th><th>Actually completed</th><th>Result</th><th>Technician</th><th>Notes</th></tr></thead><tbody>
-            {data.events.map((event) => { const planned = data.rules.find((rule) => Number(rule.cycle_type) === Number(event.primary_cycle))?.included_cycles || [event.primary_cycle]; const partial = planned.some((cycle) => !event.reset_cycles.map(Number).includes(Number(cycle))); return <tr key={event.id}><td>{formatDateTime(event.completed_at)}</td><td><strong>{cycleLabel(event.primary_cycle)}</strong></td><td>{formatKm(event.completion_mileage_km, 1)}</td><td>{event.reset_cycles.map(cycleLabel).join(' · ')}</td><td><Badge value={partial ? 'Partial scope' : 'Completed'} tone={partial ? 'warning' : 'success'}/></td><td>{event.technician_id}</td><td>{event.notes || statusLabel(event.source)}</td></tr> })}
+            {data.events.map((event) => { const corrective = event.work_type === 'corrective'; const planned = corrective ? [] : data.rules.find((rule) => Number(rule.cycle_type) === Number(event.primary_cycle))?.included_cycles || [event.primary_cycle]; const completed = event.reset_cycles || []; const partial = !corrective && planned.some((cycle) => !completed.map(Number).includes(Number(cycle))); return <tr key={event.id}><td>{formatDateTime(event.completed_at)}</td><td><strong>{corrective ? 'Corrective repair' : cycleLabel(event.primary_cycle)}</strong></td><td>{formatKm(event.completion_mileage_km, 1)}</td><td>{corrective ? 'No mileage reset' : completed.map(cycleLabel).join(' · ')}</td><td><Badge value={partial ? 'Partial scope' : 'Completed'} tone={partial ? 'warning' : 'success'}/></td><td>{event.technician_id}</td><td>{event.notes || statusLabel(event.source)}</td></tr> })}
           </tbody></table></div> : <p className="empty-copy">No completed maintenance has been recorded.</p>}
         </Card>
       </>}

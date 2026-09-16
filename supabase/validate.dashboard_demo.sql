@@ -333,6 +333,15 @@ begin
     raise exception 'Expected six demo maintenance bookings';
   end if;
 
+  if (select count(*) from maintenance_faults where demo_key like 'demo:%' and status = 'open') <> 2
+     or not exists (
+       select 1 from maintenance_faults
+       where demo_key = 'demo:fault:D29:brake' and severity = 'critical'
+         and estimated_duration_minutes = 360 and required_bay_type = 'heavy'
+     ) then
+    raise exception 'Expected two actionable demo faults including D29 brake repair';
+  end if;
+
   if not exists (
     select 1 from maintenance_bookings
     where demo_key = 'demo:booking:D22'
@@ -424,6 +433,38 @@ begin
   exception when others then rejected := true;
   end;
   if not rejected then raise exception 'Overlapping bay booking was accepted'; end if;
+
+  -- Corrective work has its own fault record, duration and bay requirements. It
+  -- must use the same atomic collision guard as preventive work without resetting
+  -- any mileage cycle.
+  perform schedule_maintenance(
+    'D29', null, '{}'::integer[], 'SPLRT-BAY-2',
+    current_date + 36 + time '08:00', current_date + 36 + time '14:00',
+    'proposed', 'corrective scheduling validation', null, 'corrective',
+    (select id from maintenance_faults where demo_key = 'demo:fault:D29:brake')
+  );
+  if not exists (
+    select 1 from maintenance_bookings
+    where lrv_id = 'D29' and work_type = 'corrective' and primary_cycle is null
+      and bundled_cycles = '{}'::integer[] and status = 'proposed'
+  ) or not exists (
+    select 1 from maintenance_faults
+    where demo_key = 'demo:fault:D29:brake' and status = 'scheduled'
+  ) then
+    raise exception 'Corrective fault scheduling did not create a valid booking';
+  end if;
+
+  rejected := false;
+  begin
+    perform schedule_maintenance(
+      'D30', null, '{}'::integer[], 'SPLRT-BAY-2',
+      current_date + 36 + time '09:00', current_date + 36 + time '13:00',
+      'proposed', 'corrective overlap validation', null, 'corrective',
+      (select id from maintenance_faults where demo_key = 'demo:fault:D30:tracking')
+    );
+  exception when others then rejected := true;
+  end;
+  if not rejected then raise exception 'Overlapping corrective booking was accepted'; end if;
 
   rejected := false;
   begin

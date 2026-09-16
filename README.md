@@ -246,10 +246,11 @@ now, but worth knowing if you ever add a stricter command later).
 ## Supabase / ingest bridge setup (NOTES)
 
 1. Create a Supabase project and run `supabase/schema.sql` in the SQL editor.
-   For a project that already has the original four tables, run these two
+   For a project that already has the original four tables, run these three
    migrations in order:
-   `supabase/migrations/202609150001_dashboard_operations_v2.sql`, then
-   `supabase/migrations/202609160001_systems_audit_fixes.sql`.
+   `supabase/migrations/202609150001_dashboard_operations_v2.sql`,
+   `supabase/migrations/202609160001_systems_audit_fixes.sql`, then
+   `supabase/migrations/202609160002_corrective_maintenance.sql`.
 2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
    `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
    function check inside a transaction and rolls it back, so seeded records are

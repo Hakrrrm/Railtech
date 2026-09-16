@@ -39,7 +39,7 @@ export async function loadVehicleDetail(lrvId) {
 
 export async function loadMaintenancePlanning() {
   const db = client()
-  const [vehicles, mileage, forecasts, bookings, bays, rules, settings, duties] = await Promise.all([
+  const [vehicles, mileage, forecasts, bookings, bays, rules, settings, duties, faults] = await Promise.all([
     result(db.from('vehicles').select('*').order('lrv_id'), 'Vehicles'),
     result(db.from('vehicle_mileage_summary').select('lrv_id,lifetime_planning_mileage_km,device_odo_km').order('lrv_id'), 'Mileage summary'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Recall forecasts'),
@@ -48,8 +48,9 @@ export async function loadMaintenancePlanning() {
     result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
     result(db.from('planning_settings').select('*').eq('fleet', 'splrt').limit(1), 'Planning settings'),
     result(db.from('duty_assignments').select('*').in('status', ['planned', 'active']).order('duty_start'), 'Duty assignments'),
+    result(db.from('maintenance_faults').select('*').in('status', ['open', 'scheduled']).order('reported_at'), 'Maintenance faults'),
   ])
-  return { vehicles, mileage, forecasts, bookings, bays, rules, settings: settings[0] || null, duties }
+  return { vehicles, mileage, forecasts, bookings, bays, rules, settings: settings[0] || null, duties, faults }
 }
 
 export async function loadDeploymentPlanning() {
@@ -88,10 +89,11 @@ export async function loadSettings() {
 export async function scheduleMaintenance(input) {
   const db = client()
   const { data, error } = await db.rpc('schedule_maintenance', {
-    p_lrv_id: input.lrvId, p_primary_cycle: Number(input.primaryCycle),
-    p_bundled_cycles: input.bundledCycles.map(Number), p_bay_id: input.bayId,
+    p_lrv_id: input.lrvId, p_primary_cycle: input.workType === 'corrective' ? null : Number(input.primaryCycle),
+    p_bundled_cycles: input.workType === 'corrective' ? [] : input.bundledCycles.map(Number), p_bay_id: input.bayId,
     p_start_at: input.startAt, p_end_at: input.endAt, p_status: input.status,
     p_notes: input.notes || null, p_booking_id: input.bookingId || null,
+    p_work_type: input.workType || 'preventive', p_fault_id: input.faultId || null,
   })
   if (error) throw new Error(error.message)
   return data
@@ -100,10 +102,11 @@ export async function scheduleMaintenance(input) {
 export async function completeMaintenance(input) {
   const db = client()
   const { data, error } = await db.rpc('complete_maintenance', {
-    p_lrv_id: input.lrvId, p_primary_cycle: Number(input.primaryCycle),
+    p_lrv_id: input.lrvId, p_primary_cycle: input.workType === 'corrective' ? null : Number(input.primaryCycle),
     p_completion_mileage_km: Number(input.mileageKm), p_technician_id: input.technicianId || 'TECH_DEMO',
     p_booking_id: input.bookingId || null, p_notes: input.notes || null,
     p_completed_cycles: input.completedCycles ? input.completedCycles.map(Number) : null,
+    p_work_type: input.workType || 'preventive', p_fault_id: input.faultId || null,
   })
   if (error) throw new Error(error.message)
   return data

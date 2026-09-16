@@ -446,28 +446,40 @@ on conflict (bay_id) do update set
 delete from stock_changes where demo_key like 'demo:%';
 delete from maintenance_events where demo_key like 'demo:%';
 delete from maintenance_bookings where demo_key like 'demo:%';
+delete from maintenance_faults where demo_key like 'demo:%';
 delete from duty_assignments where demo_key like 'demo:%';
 
+insert into maintenance_faults (
+  demo_key, lrv_id, fault_code, description, severity, reported_at,
+  estimated_duration_minutes, required_bay_type, status
+) values
+  ('demo:fault:D29:brake', 'D29', 'BRAKE_PRESSURE',
+    'Brake pressure fault requires workshop diagnosis and repair', 'critical',
+    now() - interval '2 hours', 360, 'heavy', 'open'),
+  ('demo:fault:D30:tracking', 'D30', 'TRACKING_CONTROL',
+    'Intermittent tracking and control fault requires workshop assessment', 'high',
+    now() - interval '5 hours', 240, 'heavy', 'open');
+
 insert into maintenance_bookings (
-  demo_key, lrv_id, primary_cycle, bundled_cycles, bay_id,
+  demo_key, lrv_id, work_type, primary_cycle, bundled_cycles, bay_id,
   start_at, end_at, status, notes
 ) values
-  ('demo:booking:D18', 'D18', 2000, array[2000], 'SPLRT-BAY-1',
+  ('demo:booking:D18', 'D18', 'preventive', 2000, array[2000], 'SPLRT-BAY-1',
     current_date + time '09:00', current_date + time '11:00', 'confirmed',
     'Overdue 2K recall; vehicle already in depot'),
-  ('demo:booking:D07', 'D07', 13000, array[2000,13000], 'SPLRT-BAY-1',
+  ('demo:booking:D07', 'D07', 'preventive', 13000, array[2000,13000], 'SPLRT-BAY-1',
     current_date + 1 + time '09:00', current_date + 1 + time '13:00', 'proposed',
     'Bundle the 2K and 13K cycles in one visit'),
-  ('demo:booking:D24', 'D24', 13000, array[2000,13000], 'SPLRT-BAY-1',
+  ('demo:booking:D24', 'D24', 'preventive', 13000, array[2000,13000], 'SPLRT-BAY-1',
     current_date + 2 + time '13:00', current_date + 2 + time '17:00', 'confirmed',
     'Routine planned maintenance'),
-  ('demo:booking:D25', 'D25', 40000, array[2000,13000,40000], 'SPLRT-BAY-2',
+  ('demo:booking:D25', 'D25', 'preventive', 40000, array[2000,13000,40000], 'SPLRT-BAY-2',
     current_date + 3 + time '08:00', current_date + 3 + time '14:00', 'confirmed',
     '40K package with nested-cycle completion'),
-  ('demo:booking:D26', 'D26', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
+  ('demo:booking:D26', 'D26', 'preventive', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
     current_date + 4 + time '08:00', current_date + 5 + time '08:00', 'proposed',
     '24-hour package with continuous bay occupation'),
-  ('demo:booking:D22', 'D22', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2',
+  ('demo:booking:D22', 'D22', 'preventive', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2',
     current_date + 6 + time '08:00', current_date + 27 + time '08:00', 'proposed',
     'Three-week package including weekends and waiting time');
 
@@ -538,6 +550,7 @@ where source like 'demo:%'
 
 select
   (select count(*) from maintenance_bookings where demo_key like 'demo:%') as bookings,
+  (select count(*) from maintenance_faults where demo_key like 'demo:%') as open_faults,
   (select count(*) from maintenance_events where demo_key like 'demo:%') as maintenance_events,
   (select count(*) from duty_assignments where demo_key like 'demo:%') as duties,
   (select count(*) from stock_changes where demo_key like 'demo:%') as stock_changes;
