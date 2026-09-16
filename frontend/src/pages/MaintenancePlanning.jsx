@@ -57,14 +57,15 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
     const cycles = rule?.included_cycles?.map(Number) || [primaryCycle]
     const forecastDays = Number(item.forecast_days)
     const hasForecast = item.forecast_days !== null && item.forecast_days !== undefined && Number.isFinite(forecastDays)
-    const preferredOffset = hasForecast ? Math.max(0, Math.floor(forecastDays) - 1) : 1
+    // Start on the forecast due date, then walk forward to the next free slot.
+    const preferredOffset = hasForecast ? Math.max(0, Math.ceil(forecastDays)) : 1
     const slot = findAvailableSlot(rule, state.data.bays, state.data.bookings, state.data.duties, item.lrv_id, preferredOffset)
     if (!slot) {
       setToast({ message: `No compatible free bay was found for ${vehicleLabel(item.lrv_id)} in the next six weeks.`, tone: 'danger' })
       return
     }
     setWeekOffset(Math.floor(dayOffset(slot.start) / 7))
-    setForm({ ...emptyForm, workType: 'preventive', lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, durationMinutes: Number(rule?.duration_minutes || 120), bayId: slot.bay.bay_id, date: singaporeDateFrom(slot.start), time: formatTime(slot.start), notes: cycles.length > 1 ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · first compatible free slot selected automatically` : `${cycleLabel(primaryCycle)} recall · first compatible free slot selected automatically` })
+    setForm({ ...emptyForm, workType: 'preventive', lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, durationMinutes: Number(rule?.duration_minutes || 120), bayId: slot.bay.bay_id, date: singaporeDateFrom(slot.start), time: formatTime(slot.start), notes: cycles.length > 1 ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · earliest compatible slot on or after the forecast due date` : `${cycleLabel(primaryCycle)} recall · earliest compatible slot on or after the forecast due date` })
     setEditing(true)
   }
 

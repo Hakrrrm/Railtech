@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { loadFleetOverview } from '../lib/api'
 import { cycleLabel, daysFromToday, formatDate, singaporeDate, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
@@ -13,7 +13,9 @@ const subscriptions = [
 
 export function FleetOverview({ navigate, reportUpdatedAt }) {
   const state = useSupabaseData(loadFleetOverview, [], subscriptions)
+  const [priorityFilter, setPriorityFilter] = useState('all')
   const model = useMemo(() => buildModel(state.data), [state.data])
+  const visiblePriority = useMemo(() => model?.priority.filter((item) => priorityFilter === 'all' || item.priorityCategory === priorityFilter) || [], [model, priorityFilter])
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   return <div className="fleet-page">
@@ -21,21 +23,26 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
         <div className="metric-grid metric-grid-three">
-          <MetricCard label="Maintenance attention" value={model.attention.length} detail="Faults, overdue or stale" tone="danger" icon="alert"/>
-          <MetricCard label="Due within 7 days" value={model.dueSoon.length} detail="Vehicles, grouped by recall" tone="warning" icon="clock"/>
-          <MetricCard label="Spares on reserve" value={model.spares} detail="Serviceable idle LRVs" tone="info" icon="train"/>
+          <MetricCard label="Maintenance attention" value={model.attention.length} detail="Due now, due soon or fault repair" tone="danger" icon="alert"/>
+          <MetricCard label="Due within 7 days" value={model.dueSoon.length} detail="Due today and upcoming recalls" tone="warning" icon="clock"/>
+          <MetricCard label="Spares on reserve" value={model.spares} detail="Idle, serviceable and unbooked" tone="info" icon="train"/>
         </div>
 
         <div className="overview-grid">
-          <Card title="Priority vehicles" eyebrow="Live feed" className="priority-card">
+          <Card title="Priority vehicles" className="priority-card" action={<select className="priority-filter" aria-label="Filter priority vehicles" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
+            <option value="all">All priorities ({model.priority.length})</option>
+            <option value="today">Due today ({model.priorityCounts.today})</option>
+            <option value="fault">Fault repair ({model.priorityCounts.fault})</option>
+            <option value="week">Due in next 7 days ({model.priorityCounts.week})</option>
+          </select>}>
             <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Next maintenance cycle</th><th>Km to maintenance</th><th>Priority</th><th aria-label="Open"/></tr></thead>
-              <tbody>{model.priority.map((item) => <tr key={item.lrv_id}>
+              <tbody>{visiblePriority.map((item) => <tr key={item.lrv_id}>
                 <td><strong>{vehicleLabel(item.lrv_id)}</strong></td><td><Badge value={item.displayStatus}/></td>
                 <td><strong>{item.status === 'faulty' ? 'Corrective repair' : cycleLabel(item.cycle_type)}</strong></td>
                 <td><strong className={item.status === 'faulty' || Number(item.km_to_next) <= 0 ? 'text-danger' : ''}>{item.status === 'faulty' ? 'Fault reported' : maintenanceDistance(item.km_to_next)}</strong></td>
                 <td>{item.status === 'faulty' ? <span className="priority-timing priority-overdue">Fault repair</span> : <span className={`priority-timing priority-${forecastTone(item.displayForecastDays)}`}>{priorityForecastLabel(item.displayForecastDays)}</span>}</td>
                 <td><button className="icon-button" aria-label={`Open ${vehicleLabel(item.lrv_id)}`} onClick={() => navigate(`vehicle/${item.lrv_id}`)}><Icon name="chevron"/></button></td>
-              </tr>)}</tbody></table></div>
+              </tr>)}{visiblePriority.length === 0 && <tr><td colSpan="6" className="empty-copy">No vehicles match this priority filter.</td></tr>}</tbody></table></div>
           </Card>
           <Card title="Next best action" eyebrow="Decision support" className="action-card">
             <div className={`action-symbol ${model.next.status === 'faulty' ? 'danger' : ''}`}><Icon name={model.next.status === 'faulty' ? 'alert' : 'calendar'} size={25}/></div>
@@ -76,9 +83,18 @@ function buildModel(data) {
     return { ...row, displayForecastDays: row.forecast_days, displayStatus: row.status === 'maintenance' || row.currentBooking ? 'maintenance' : row.status }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
-  const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || row.currentBooking || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
-  const dueSoon = combined.filter((row) => !['faulty', 'maintenance'].includes(row.displayStatus) && row.displayForecastDays !== null && Number(row.displayForecastDays) >= 0 && Number(row.displayForecastDays) <= 7)
-  const priority = combined.filter((row) => row.displayStatus !== 'maintenance').map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.openBooking ? 400 : 0) })).sort((a, b) => b.effectivePriority - a.effectivePriority).slice(0, 6)
+  const priority = combined
+    .filter((row) => row.displayStatus !== 'maintenance')
+    .map((row) => ({ ...row, priorityCategory: priorityCategory(row), reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.openBooking ? 400 : 0) }))
+    .filter((row) => row.priorityCategory)
+    .sort((a, b) => b.effectivePriority - a.effectivePriority)
+  const attention = priority
+  const dueSoon = priority.filter((row) => ['today', 'week'].includes(row.priorityCategory))
+  const priorityCounts = {
+    today: priority.filter((row) => row.priorityCategory === 'today').length,
+    fault: priority.filter((row) => row.priorityCategory === 'fault').length,
+    week: priority.filter((row) => row.priorityCategory === 'week').length,
+  }
   const leading = priority[0] || {}
   const next = leading.status === 'faulty'
     ? { status: 'faulty', title: `Replace ${vehicleLabel(leading.lrv_id)} at the next handover`, description: leading.reason, reason: 'A controlled stock change keeps the service slot covered while the faulty LRV returns to depot.', button: 'Open deployment plan', destination: 'deployment' }
@@ -92,7 +108,17 @@ function buildModel(data) {
     return { date: iso, count: data.forecasts.filter((cycle) => cycle.forecast_date && daysFromToday(cycle.forecast_date) === offset).length }
   })
   const outlookScaleMax = Math.max(3, ...outlook.map((day) => day.count))
-  return { attention, dueSoon, priority, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
+  return { attention, dueSoon, priority, priorityCounts, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
+}
+
+function priorityCategory(row) {
+  if (row.status === 'faulty') return 'fault'
+  if (row.displayForecastDays === null || row.displayForecastDays === undefined) return null
+  const days = Number(row.displayForecastDays)
+  if (!Number.isFinite(days)) return null
+  if (days <= 0) return 'today'
+  if (days <= 7) return 'week'
+  return null
 }
 
 function weekday(value) {
