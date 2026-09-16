@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react'
 import { loadFleetOverview } from '../lib/api'
-import { cycleLabel, daysFromToday, forecastLabel, formatDate, formatKm, singaporeDate, vehicleLabel } from '../lib/format'
+import { cycleLabel, daysFromToday, formatDate, singaporeDate, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -16,7 +16,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
   const model = useMemo(() => buildModel(state.data), [state.data])
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
-  return <>
+  return <div className="fleet-page">
     <PageHeader eyebrow="Operations control centre" title="Fleet Overview" actions={<button className="button button-secondary" onClick={() => state.refresh()}><Icon name="refresh"/>Refresh</button>}/>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
@@ -28,11 +28,12 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
 
         <div className="overview-grid">
           <Card title="Priority vehicles" eyebrow="Live feed" className="priority-card">
-            <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Planning mileage</th><th>Priority</th><th aria-label="Open"/></tr></thead>
+            <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Next maintenance cycle</th><th>Km to maintenance</th><th>Priority</th><th aria-label="Open"/></tr></thead>
               <tbody>{model.priority.map((item) => <tr key={item.lrv_id}>
-                <td><strong>{vehicleLabel(item.lrv_id)}</strong><small>{item.reason}</small></td><td><Badge value={item.status}/></td>
-                <td>{formatKm(item.lifetime_planning_mileage_km, 1)}<small>{formatKm(item.mileage_today_km, 1)} today</small></td>
-                <td><strong className={item.displayForecastDays !== null && item.displayForecastDays <= 2 ? 'text-danger' : ''}>{forecastLabel(item.displayForecastDays)}</strong><small>{formatKm(item.km_to_next)} to {cycleLabel(item.cycle_type)}{item.usingStoredForecast ? ' · last known forecast' : ''}</small></td>
+                <td><strong>{vehicleLabel(item.lrv_id)}</strong></td><td><Badge value={item.status}/></td>
+                <td><strong>{cycleLabel(item.cycle_type)}</strong></td>
+                <td><strong className={Number(item.km_to_next) <= 0 ? 'text-danger' : ''}>{maintenanceDistance(item.km_to_next)}</strong></td>
+                <td><span className={`priority-timing priority-${forecastTone(item.displayForecastDays)}`}>{priorityForecastLabel(item.displayForecastDays)}</span>{item.usingStoredForecast && <small>Last known forecast</small>}</td>
                 <td><button className="icon-button" aria-label={`Open ${vehicleLabel(item.lrv_id)}`} onClick={() => navigate(`vehicle/${item.lrv_id}`)}><Icon name="chevron"/></button></td>
               </tr>)}</tbody></table></div>
           </Card>
@@ -56,7 +57,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
         </Card>
       </>}
     </DataBoundary>
-  </>
+  </div>
 }
 
 function buildModel(data) {
@@ -71,7 +72,7 @@ function buildModel(data) {
   const activeBookings = new Map(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => [booking.lrv_id, booking]))
   const combined = data.vehicles.map((vehicle) => {
     const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id) }
-    const canUseStoredForecast = row.forecast_days === null && row.status === 'maintenance' && row.seeded_due_date
+    const canUseStoredForecast = row.forecast_days === null && row.seeded_due_date
     return { ...row, displayForecastDays: canUseStoredForecast ? daysFromToday(row.seeded_due_date) : row.forecast_days, usingStoredForecast: Boolean(canUseStoredForecast) }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
@@ -92,6 +93,29 @@ function buildModel(data) {
 
 function weekday(value) {
   return new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', weekday: 'short' }).format(new Date(`${value}T00:00:00+08:00`))
+}
+
+function priorityForecastLabel(days) {
+  if (days === null || days === undefined) return 'Awaiting telemetry'
+  if (days < 0) return `${Math.abs(days)}d overdue`
+  if (days === 0) return 'Due today'
+  if (days === 1) return 'Due tomorrow'
+  return `Due in ${days} days`
+}
+
+function forecastTone(days) {
+  if (days === null || days === undefined) return 'muted'
+  if (days < 0) return 'overdue'
+  if (days === 0) return 'today'
+  return 'upcoming'
+}
+
+function maintenanceDistance(km) {
+  const value = Number(km)
+  if (!Number.isFinite(value)) return 'Awaiting mileage'
+  if (value < 0) return `${Math.abs(value).toLocaleString('en-SG')} km overdue`
+  if (value === 0) return 'Due now'
+  return `${value.toLocaleString('en-SG')} km remaining`
 }
 
 function reasonFor(row, staleAfterHours) {
