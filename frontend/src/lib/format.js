@@ -92,6 +92,7 @@ export function statusLabel(status) {
   return {
     in_service: 'In service', maintenance: 'Under maintenance', idle: 'Idle', faulty: 'Faulty',
     proposed: 'Proposed', confirmed: 'Confirmed', completed: 'Completed', partially_completed: 'Partially completed', cancelled: 'Cancelled',
+    overdue: 'Overdue', maintenance_due: 'Maintenance due', due_soon: 'Due soon',
     active: 'Active', withdrawn: 'Withdrawn', planned: 'Planned',
   }[status] || status || 'Unknown'
 }

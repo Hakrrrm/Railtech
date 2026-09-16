@@ -246,11 +246,12 @@ now, but worth knowing if you ever add a stricter command later).
 ## Supabase / ingest bridge setup (NOTES)
 
 1. Create a Supabase project and run `supabase/schema.sql` in the SQL editor.
-   For a project that already has the original four tables, run these three
+   For a project that already has the original four tables, run these four
    migrations in order:
    `supabase/migrations/202609150001_dashboard_operations_v2.sql`,
-   `supabase/migrations/202609160001_systems_audit_fixes.sql`, then
-   `supabase/migrations/202609160002_corrective_maintenance.sql`.
+   `supabase/migrations/202609160001_systems_audit_fixes.sql`,
+   `supabase/migrations/202609160002_corrective_maintenance.sql`, then
+   `supabase/migrations/202609160003_demo_reset.sql`.
 2. For the 30-LRV showcase, run `supabase/seed.dashboard_demo.sql` and then
    `supabase/validate.dashboard_demo.sql`. The validation runs its nested-cycle
    function check inside a transaction and rolls it back, so seeded records are
@@ -258,6 +259,9 @@ now, but worth knowing if you ever add a stricter command later).
    2K = 2 hours, 13K = 4 hours, 40K = 6 hours, 120K = 24 hours and 360K =
    21 elapsed days. Higher packages include every lower cycle; technicians
    record the actual completed scope and only those cycles reset. For a
+   browser-driven restart, use **Admin → Reset demo data**. This restores the
+   seeded planning state and removes reserved-range simulator events; stop the
+   MQTT simulator first so it does not immediately publish new events. For a
    hardware-only project, copy `supabase/seed.example.sql` and
    adjust `lrv_id` values to match your
    devices' `config.h` `MQTT_LRV_ID`/`MQTT_FLEET`, run it -- the FK on

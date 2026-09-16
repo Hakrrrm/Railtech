@@ -616,6 +616,40 @@ begin
   ) then
     raise exception 'Atomic stock change did not record the replacement assignment';
   end if;
+
+  -- The browser reset must restore the seeded planning state after bookings,
+  -- completions, simulator mileage and a stock change have all mutated it.
+  perform reset_dashboard_demo();
+  if exists (
+    select 1 from maintenance_bookings
+    where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+      and (demo_key is null or demo_key not like 'demo:%')
+  ) or (select count(*) from maintenance_bookings where demo_key like 'demo:booking:%') <> 6 then
+    raise exception 'Demo reset did not restore the six seeded bookings';
+  end if;
+  if (select count(*) from maintenance_faults where demo_key like 'demo:fault:%' and status = 'open') <> 2 then
+    raise exception 'Demo reset did not reopen the two seeded faults';
+  end if;
+  if not exists (
+    select 1 from stock_changes
+    where demo_key = 'demo:stock:D29:D27' and decision_status = 'proposed'
+      and replacement_assignment_id is null and decided_at is null
+  ) then
+    raise exception 'Demo reset did not restore the proposed stock change';
+  end if;
+  if exists (
+    select 1 from segment_traversals
+    where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$' and seq >= 950000000
+  ) then
+    raise exception 'Demo reset did not clear simulator events';
+  end if;
+  if not exists (
+    select 1 from cycle_state where lrv_id = 'D12' and cycle_type = 2000 and km_to_next = 0
+  ) or not exists (
+    select 1 from cycle_state where lrv_id = 'D18' and cycle_type = 2000 and km_to_next = -60
+  ) then
+    raise exception 'Demo reset did not restore the seeded cycle state';
+  end if;
 end
 $validation$;
 

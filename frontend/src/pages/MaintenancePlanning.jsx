@@ -153,12 +153,15 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
           </Card>
 
           <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap">
-            <div className="maintenance-priority-grid">{model.queue.map((item, index) => <article className="maintenance-priority-item" key={item.fault?.id || item.lrv_id}>
-              <span className={`queue-rank ${Number(item.km_to_next) < 0 ? 'urgent' : ''}`}>{index + 1}</span>
-              <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {item.work_type === 'corrective' ? 'Corrective repair' : cycleLabel(item.cycle_type)}</strong><small>{queueDecisionLabel(item)}</small></div>
-              <button className={`priority-add ${item.booking ? 'priority-booked' : ''} ${item.work_type === 'corrective' ? 'priority-fault' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Find a collision-free slot for ${vehicleLabel(item.lrv_id)}`} title={item.booking ? 'Open existing booking' : 'Find the first compatible free slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
-              <div className="maintenance-priority-meta"><Badge value={item.status}/><b>{queuePlanningDetail(item, state.data.rules)}</b></div>
-            </article>)}</div>
+            <div className="maintenance-priority-grid">{model.queue.map((item, index) => {
+              const decisionStatus = queueStatus(item)
+              return <article className="maintenance-priority-item" key={item.fault?.id || item.lrv_id}>
+                <span className={`queue-rank ${decisionStatus === 'overdue' ? 'urgent' : ''}`}>{index + 1}</span>
+                <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {item.work_type === 'corrective' ? 'Corrective repair' : cycleLabel(item.cycle_type)}</strong><small>{queueDecisionLabel(item)}</small></div>
+                <button className={`priority-add ${item.booking ? 'priority-booked' : ''} ${item.work_type === 'corrective' ? 'priority-fault' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Find a collision-free slot for ${vehicleLabel(item.lrv_id)}`} title={item.booking ? 'Open existing booking' : 'Find the first compatible free slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
+                <div className="maintenance-priority-meta"><Badge value={decisionStatus}/><b>{queuePlanningDetail(item, state.data.rules)}</b></div>
+              </article>
+            })}</div>
           </Card>
         </div>
 
@@ -282,6 +285,13 @@ function queueDecisionLabel(item) {
   if (Number(item.forecast_days) === 0) return 'Due today'
   if (Number(item.forecast_days) === 1) return 'Due tomorrow'
   return `Due in ${item.forecast_days} days`
+}
+
+function queueStatus(item) {
+  if (item.work_type === 'corrective') return 'faulty'
+  if (Number(item.km_to_next) < 0) return 'overdue'
+  if (Number(item.km_to_next) === 0 || Number(item.forecast_days) <= 0) return 'maintenance_due'
+  return 'due_soon'
 }
 
 function queuePlanningDetail(item, rules) {

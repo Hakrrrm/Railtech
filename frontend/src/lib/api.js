@@ -120,6 +120,12 @@ export async function cancelMaintenanceBooking(bookingId, reason = 'Cancelled by
   if (error) throw new Error(error.message)
 }
 
+export async function resetDashboardDemo() {
+  const db = client()
+  const { error } = await db.rpc('reset_dashboard_demo')
+  if (error) throw new Error(error.message)
+}
+
 export async function selectStockReplacement(changeId, replacementLrvId) {
   const db = client()
   const { error } = await db.rpc('select_stock_replacement', {
