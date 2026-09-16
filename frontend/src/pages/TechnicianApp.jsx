@@ -81,7 +81,7 @@ export function TechnicianApp({ navigate }) {
     <header className="technician-topbar"><button aria-label="Return to dashboard" onClick={() => navigate('fleet')}><Icon name="train"/></button><div><strong>Railtech</strong><span>Technician</span></div><b>Demo</b></header>
     <main className="technician-content">
       {state.loading && <TechState icon="refresh" title="Loading workshop plan" text="Checking expected maintenance arrivals…"/>}
-      {state.error && <TechState icon="alert" title="Could not load jobs" text={state.error} action={<button className="tech-primary" onClick={() => state.refresh()}>Try again</button>}/>} 
+      {state.error && <TechState icon="alert" title="Could not load jobs" text={state.error} action={<button className="tech-primary" onClick={() => state.refresh()}>Try again</button>}/>}
       {!state.loading && !state.error && screen !== 'success' && <div className="tech-screen-heading"><button className="tech-back" aria-label="Back" onClick={goBack}><Icon name="arrow"/></button><div><span>{headingEyebrow(screen)}</span><h1>{heading(screen)}</h1></div>{screen === 'queue' && <em>{jobs.length}</em>}</div>}
 
       {!state.loading && !state.error && screen === 'queue' && <>
@@ -121,7 +121,7 @@ export function TechnicianApp({ navigate }) {
         <div className="tech-bottom-actions tech-review-actions"><button className="tech-secondary" disabled={busy} onClick={beginCapture}>Retake</button><button className="tech-primary" disabled={busy || (requiresManualOcrReview(ocr.confidence) && !reviewed)} onClick={submit}>{busy ? 'Sending…' : 'Confirm and send'}</button></div>
       </>}
 
-      {!state.loading && !state.error && screen === 'success' && <TechState icon="check" title="Reading recorded" text={`${vehicleLabel(selected?.lrvId)} now has a new physical mileage anchor. OCC views will update automatically.`} action={<button className="tech-primary" onClick={reset}>Back to expected LRVs</button>}/>} 
+      {!state.loading && !state.error && screen === 'success' && <TechState icon="check" title="Reading recorded" text={`${vehicleLabel(selected?.lrvId)} now has a new physical mileage anchor. OCC views will update automatically.`} action={<button className="tech-primary" onClick={reset}>Back to expected LRVs</button>}/>}
       {error && <div className="tech-error" role="alert"><Icon name="alert"/><span>{error}</span><button aria-label="Dismiss" onClick={() => setError(null)}>×</button></div>}
     </main>
   </section></div>
