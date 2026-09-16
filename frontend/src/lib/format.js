@@ -61,16 +61,15 @@ export function formatDateTimeRange(start, end) {
   return `${formatDateTime(start)} – ${formatDateTime(end)}`
 }
 
-export function singaporeDate(offset = 0) {
+export function singaporeDate(offset = 0, now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: SINGAPORE_TIMEZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date())
+  }).formatToParts(now)
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
-  const date = new Date(`${values.year}-${values.month}-${values.day}T00:00:00+08:00`)
-  date.setUTCDate(date.getUTCDate() + offset)
+  const date = new Date(Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day) + offset))
   return date.toISOString().slice(0, 10)
 }
 

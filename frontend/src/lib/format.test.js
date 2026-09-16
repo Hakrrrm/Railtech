@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, statusLabel, vehicleLabel } from './format'
+import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, singaporeDate, statusLabel, vehicleLabel } from './format'
 
 describe('operator-facing formatting', () => {
   it('translates distances and cycles into scan-friendly labels', () => {
@@ -26,5 +26,11 @@ describe('operator-facing formatting', () => {
     expect(formatDuration(1440)).toBe('1 day')
     expect(formatDuration(30240)).toBe('21 days')
     expect(statusLabel('partially_completed')).toBe('Partially completed')
+  })
+
+  it('keeps Singapore calendar dates from shifting back to UTC', () => {
+    const singaporeMorning = new Date('2026-09-15T16:30:00Z')
+    expect(singaporeDate(0, singaporeMorning)).toBe('2026-09-16')
+    expect(singaporeDate(1, singaporeMorning)).toBe('2026-09-17')
   })
 })

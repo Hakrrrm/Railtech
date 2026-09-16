@@ -17,7 +17,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   return <>
-    <PageHeader eyebrow="Operations control centre" title="Fleet Overview" description="Live fleet condition, mileage confidence and the next decisions that protect service." actions={<button className="button button-secondary" onClick={() => state.refresh()}><Icon name="refresh"/>Refresh</button>}/>
+    <PageHeader eyebrow="Operations control centre" title="Fleet Overview" actions={<button className="button button-secondary" onClick={() => state.refresh()}><Icon name="refresh"/>Refresh</button>}/>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
         <div className="metric-grid metric-grid-three">
@@ -28,11 +28,10 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
 
         <div className="overview-grid">
           <Card title="Priority vehicles" eyebrow="Live feed" className="priority-card">
-            <div className="table-wrap"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Planning mileage</th><th>Location</th><th>Priority</th><th aria-label="Open"/></tr></thead>
+            <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Planning mileage</th><th>Priority</th><th aria-label="Open"/></tr></thead>
               <tbody>{model.priority.map((item) => <tr key={item.lrv_id}>
                 <td><strong>{vehicleLabel(item.lrv_id)}</strong><small>{item.reason}</small></td><td><Badge value={item.status}/></td>
                 <td>{formatKm(item.lifetime_planning_mileage_km, 1)}<small>{formatKm(item.mileage_today_km, 1)} today</small></td>
-                <td>{item.seg_id || 'Depot'}<small>{item.latest_telemetry_at ? `Seen ${formatDate(item.latest_telemetry_at)}` : 'No telemetry'}</small></td>
                 <td><strong className={item.displayForecastDays !== null && item.displayForecastDays <= 2 ? 'text-danger' : ''}>{forecastLabel(item.displayForecastDays)}</strong><small>{formatKm(item.km_to_next)} to {cycleLabel(item.cycle_type)}{item.usingStoredForecast ? ' · last known forecast' : ''}</small></td>
                 <td><button className="icon-button" aria-label={`Open ${vehicleLabel(item.lrv_id)}`} onClick={() => navigate(`vehicle/${item.lrv_id}`)}><Icon name="chevron"/></button></td>
               </tr>)}</tbody></table></div>
@@ -45,8 +44,9 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
           </Card>
         </div>
 
-        <Card title="14-day maintenance outlook" eyebrow="Forecast dates · days are primary, kilometres are supporting detail">
+        <Card title="14-day maintenance outlook">
           <div className="outlook-chart">
+            <div className="outlook-axis-label">Maintenance blocks scheduled</div>
             <div className="outlook-scale" aria-label={`Scale from zero to ${model.outlookScaleMax}`}>{Array.from({ length: model.outlookScaleMax + 1 }, (_, index) => <span key={index}>{model.outlookScaleMax - index}</span>)}</div>
             <div className="outlook" style={{ '--outlook-grid-step': `${100 / model.outlookScaleMax}%` }}>{model.outlook.map((day) => <div className="outlook-day" key={day.date} title={`${day.count} maintenance cycle${day.count === 1 ? '' : 's'}`}>
               <div className="bar-area"><span style={{ height: `${day.count / model.outlookScaleMax * 100}%` }} className={day.count ? 'bar-active' : ''}/></div>
