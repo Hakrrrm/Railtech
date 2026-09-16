@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cancelMaintenanceBooking, completeMaintenance, loadMaintenancePlanning, scheduleMaintenance } from '../lib/api'
-import { cycleLabel, formatDate, formatDuration, formatKm, formatTime, singaporeDate, statusLabel, vehicleLabel } from '../lib/format'
+import { cycleLabel, formatDate, formatDuration, formatKm, formatTime, singaporeDate, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -19,21 +19,35 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   const [completion, setCompletion] = useState(null)
   const [toast, setToast] = useState(null)
   const [saving, setSaving] = useState(false)
-  const model = useMemo(() => buildMaintenanceModel(state.data), [state.data])
+  const [weekOffset, setWeekOffset] = useState(0)
+  const model = useMemo(() => buildMaintenanceModel(state.data, weekOffset), [state.data, weekOffset])
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   const suggest = (item) => {
+    if (item.booking) {
+      editBooking(item.booking)
+      return
+    }
     const approaching = state.data.forecasts.filter((cycle) => cycle.lrv_id === item.lrv_id && cycle.forecast_days !== null && Number(cycle.forecast_days) <= Number(item.forecast_days) + 2).map((cycle) => Number(cycle.cycle_type))
     const primaryCycle = Math.max(Number(item.cycle_type), ...approaching)
     const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle)
     const cycles = rule?.included_cycles?.map(Number) || [primaryCycle]
-    const bay = state.data.bays.find((candidate) => candidate.active && (candidate.bay_type === rule?.compatible_bay_type || candidate.bay_type === 'universal')) || state.data.bays.find((candidate) => candidate.active)
-    setForm({ ...emptyForm, lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, bayId: bay?.bay_id || '', date: singaporeDate(Math.max(1, Math.min(6, Number(item.forecast_days || 1)))), notes: cycles.length > 1 ? `${cycleLabel(primaryCycle)} standard package includes ${cycles.map(cycleLabel).join(', ')}` : `${cycleLabel(primaryCycle)} forecast-based recall` })
+    const forecastDays = Number(item.forecast_days)
+    const hasForecast = item.forecast_days !== null && item.forecast_days !== undefined && Number.isFinite(forecastDays)
+    const preferredOffset = hasForecast ? Math.max(0, Math.floor(forecastDays) - 1) : 1
+    const slot = findAvailableSlot(rule, state.data.bays, state.data.bookings, state.data.duties, item.lrv_id, preferredOffset)
+    if (!slot) {
+      setToast({ message: `No compatible free bay was found for ${vehicleLabel(item.lrv_id)} in the next six weeks.`, tone: 'danger' })
+      return
+    }
+    setWeekOffset(Math.floor(dayOffset(slot.start) / 7))
+    setForm({ ...emptyForm, lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, bayId: slot.bay.bay_id, date: singaporeDateFrom(slot.start), time: formatTime(slot.start), notes: cycles.length > 1 ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · first compatible free slot selected automatically` : `${cycleLabel(primaryCycle)} recall · first compatible free slot selected automatically` })
     setEditing(true)
   }
 
   const editBooking = (booking) => {
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(booking.start_at))
+    setWeekOffset(Math.floor(dayOffset(booking.start_at) / 7))
     setForm({ lrvId: booking.lrv_id, primaryCycle: booking.primary_cycle, bundledCycles: booking.bundled_cycles, bayId: booking.bay_id, date, time: formatTime(booking.start_at), status: booking.status, notes: booking.notes || '', bookingId: booking.id })
     setEditing(true)
   }
@@ -98,19 +112,21 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
           <MetricCard label="Confirmed this week" value={model.confirmed} detail="Continuous depot/bay stays" tone="success" icon="calendar"/>
         </div>
 
-        <Card title="Weekly depot schedule" className="schedule-card">
-          <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
-            {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking} onComplete={beginCompletion}/>)}</div>
-        </Card>
+        <div className="maintenance-planning-grid">
+          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div>}>
+            <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
+              {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
+          </Card>
 
-        <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap">
-          <div className="maintenance-priority-grid">{model.queue.map((item, index) => <article className="maintenance-priority-item" key={item.lrv_id}>
-            <span className={`queue-rank ${Number(item.km_to_next) < 0 ? 'urgent' : ''}`}>{index + 1}</span>
-            <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {cycleLabel(item.cycle_type)}</strong><small>{queueForecastLabel(item)}</small></div>
-            <div className="maintenance-priority-distance"><b>{queueDistanceLabel(item.km_to_next)}</b><small>{statusLabel(item.status)}</small></div>
-            <button className="priority-add" onClick={() => suggest(item)} aria-label={`Add ${vehicleLabel(item.lrv_id)} to the weekly depot schedule`} title="Add to schedule"><Icon name="plus"/></button>
-          </article>)}</div>
-        </Card>
+          <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap">
+            <div className="maintenance-priority-grid">{model.queue.map((item, index) => <article className="maintenance-priority-item" key={item.lrv_id}>
+              <span className={`queue-rank ${Number(item.km_to_next) < 0 ? 'urgent' : ''}`}>{index + 1}</span>
+              <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {cycleLabel(item.cycle_type)}</strong><small>{queueForecastLabel(item)}</small></div>
+              <button className={`priority-add ${item.booking ? 'priority-booked' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Add ${vehicleLabel(item.lrv_id)} to the weekly depot schedule`} title={item.booking ? 'Open existing booking' : 'Find an available slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
+              <div className="maintenance-priority-meta"><Badge value={item.displayStatus}/><b>{queueDistanceLabel(item.km_to_next)}</b></div>
+            </article>)}</div>
+          </Card>
+        </div>
 
         {editing && <div className="modal-backdrop" onMouseDown={() => setEditing(false)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><h2>{form.bookingId ? 'Adjust booking' : 'Create maintenance booking'}</h2><button onClick={() => setEditing(false)}>×</button></div>
           <form onSubmit={submit} className="form-grid">
@@ -123,7 +139,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
             <fieldset className="form-span"><legend>Standard package scope</legend><div className="cycle-checks">{form.bundledCycles.map((cycle) => <label key={cycle}><input type="checkbox" checked readOnly/>{cycleLabel(cycle)}</label>)}</div><small>The technician records the cycles actually completed when closing the visit.</small></fieldset>
             <div className="form-span scope-summary"><strong>Expected continuous occupancy</strong><span>{formatDuration(state.data.rules.find((rule) => Number(rule.cycle_type) === Number(form.primaryCycle))?.duration_minutes)} · return at the same time of day for multi-day packages</span></div>
             <label className="form-span">Planning note<textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}/></label>
-            <div className="modal-actions form-span">{form.bookingId && <button type="button" className="button button-secondary" disabled={saving} onClick={cancelBooking}>Cancel booking</button>}<button type="button" className="button button-secondary" onClick={() => setEditing(false)}>Close</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking capacity…' : 'Save booking'}</button></div>
+            <div className="modal-actions form-span">{form.bookingId && <button type="button" className="button button-secondary" disabled={saving} onClick={cancelBooking}>Cancel booking</button>}{form.bookingId && form.status === 'confirmed' && <button type="button" className="button button-secondary" disabled={saving} onClick={() => { const booking = state.data.bookings.find((item) => item.id === form.bookingId); if (booking) { setEditing(false); beginCompletion(booking) } }}>Record completed work</button>}<button type="button" className="button button-secondary" onClick={() => setEditing(false)}>Close</button><button className="button button-primary" disabled={saving}>{saving ? 'Checking capacity…' : 'Save booking'}</button></div>
           </form></div></div>}
 
         {completion && <div className="modal-backdrop" onMouseDown={() => setCompletion(null)}><div className="modal" onMouseDown={(event) => event.stopPropagation()}><div className="modal-header"><h2>{vehicleLabel(completion.booking.lrv_id)} · {cycleLabel(completion.booking.primary_cycle)} visit</h2><button onClick={() => setCompletion(null)}>×</button></div>
@@ -140,17 +156,23 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   </>
 }
 
-function buildMaintenanceModel(data) {
+function buildMaintenanceModel(data, weekOffset = 0) {
   if (!data) return null
   const vehicles = new Map(data.vehicles.map((vehicle) => [vehicle.lrv_id, vehicle]))
+  const bookings = new Map(data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status)).map((booking) => [booking.lrv_id, booking]))
   const nearest = new Map()
-  data.forecasts.forEach((item) => { const current = nearest.get(item.lrv_id); if (!current || Number(item.priority_score) > Number(current.priority_score)) nearest.set(item.lrv_id, { ...item, status: vehicles.get(item.lrv_id)?.status }) })
+  data.forecasts.forEach((item) => {
+    const current = nearest.get(item.lrv_id)
+    const status = vehicles.get(item.lrv_id)?.status
+    if (!current || Number(item.priority_score) > Number(current.priority_score)) nearest.set(item.lrv_id, { ...item, status, displayStatus: queueStatus(status, item), booking: bookings.get(item.lrv_id) })
+  })
   const queue = [...nearest.values()].sort((a, b) => Number(b.priority_score) - Number(a.priority_score)).slice(0, 12)
+  const weekStartOffset = weekOffset * 7
   return {
     queue, overdue: queue.filter((row) => Number(row.km_to_next) < 0).length,
     dueSoon: queue.filter((row) => row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
-    confirmed: data.bookings.filter((row) => row.status === 'confirmed' && dayOffset(row.start_at) >= 0 && dayOffset(row.start_at) < 7).length,
-    days: Array.from({ length: 7 }, (_, index) => singaporeDate(index)),
+    confirmed: data.bookings.filter((row) => row.status === 'confirmed' && dayOffset(row.start_at) >= weekStartOffset && dayOffset(row.start_at) < weekStartOffset + 7).length,
+    days: Array.from({ length: 7 }, (_, index) => singaporeDate(weekStartOffset + index)),
   }
 }
 
@@ -159,7 +181,7 @@ function dayOffset(value) {
   return Math.round((new Date(`${bookingDate}T00:00:00+08:00`) - new Date(`${singaporeDate()}T00:00:00+08:00`)) / 86400000)
 }
 
-function ScheduleRow({ bay, days, bookings, onEdit, onComplete }) {
+function ScheduleRow({ bay, days, bookings, onEdit }) {
   const layout = layoutScheduleBookings(bookings, bay.bay_id, days)
   const lanes = Math.max(1, ...layout.map((item) => item.lane + 1))
   const rowHeight = Math.max(86, lanes * 62 + 12)
@@ -169,11 +191,9 @@ function ScheduleRow({ bay, days, bookings, onEdit, onComplete }) {
       const width = ((endDay - startDay) / days.length) * 100
       return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 6px)`, width: `calc(${width}% - 12px)`, top: 8 + lane * 62 }}>
         <button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}>
-          <strong>{vehicleLabel(booking.lrv_id)} · {cycleLabel(booking.primary_cycle)}</strong>
-          <span>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</span>
+          <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {cycleLabel(booking.primary_cycle)}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
           <Badge value={booking.status}/>
         </button>
-        {booking.status === 'confirmed' && <button className="complete-link" onClick={() => onComplete(booking)}>Record completion</button>}
       </div>
     })}
   </div></>
@@ -221,4 +241,57 @@ function queueDistanceLabel(value) {
   if (km < 0) return `${formatKm(Math.abs(km))} overdue`
   if (km === 0) return 'Due now'
   return `${formatKm(km)} remaining`
+}
+
+function queueStatus(status, item) {
+  if (status === 'faulty') return 'faulty'
+  if (status === 'maintenance') return 'maintenance'
+  if (Number(item.km_to_next) <= 0 || (item.forecast_days !== null && item.forecast_days !== undefined && Number(item.forecast_days) <= 7)) return 'maintenance_due'
+  return status
+}
+
+function findAvailableSlot(rule, bays, bookings, duties, lrvId, preferredOffset) {
+  if (!rule) return null
+  const durationMs = Number(rule.duration_minutes || 90) * 60000
+  const eligibleBays = bays.filter((bay) => bay.active && isCompatibleBay(rule, bay))
+  const occupied = bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status))
+  const now = new Date()
+  for (let offset = preferredOffset; offset <= preferredOffset + 42; offset += 1) {
+    const date = singaporeDate(offset)
+    for (const bay of eligibleBays) {
+      const openMinutes = timeToMinutes(bay.opens_at)
+      const closeMinutes = timeToMinutes(bay.closes_at)
+      for (let minute = openMinutes; minute <= closeMinutes; minute += 30) {
+        const start = new Date(`${date}T${minutesToTime(minute)}:00+08:00`)
+        const end = new Date(start.getTime() + durationMs)
+        const endTime = Number(formatTime(end).replace(':', ''))
+        const openTime = Number(bay.opens_at.slice(0, 5).replace(':', ''))
+        const closeTime = Number(bay.closes_at.slice(0, 5).replace(':', ''))
+        if (start < now || endTime < openTime || endTime > closeTime) continue
+        const bayOverlap = occupied.some((booking) => booking.bay_id === bay.bay_id && new Date(booking.start_at) < end && new Date(booking.end_at) > start)
+        const vehicleOverlap = occupied.some((booking) => booking.lrv_id === lrvId && new Date(booking.start_at) < end && new Date(booking.end_at) > start)
+        const dutyOverlap = (duties || []).some((duty) => duty.lrv_id === lrvId && new Date(duty.duty_start) < end && new Date(duty.duty_end) > start)
+        if (!bayOverlap && !vehicleOverlap && !dutyOverlap) return { bay, start, end }
+      }
+    }
+  }
+  return null
+}
+
+function isCompatibleBay(rule, bay) {
+  if (rule.compatible_bay_type === 'heavy') return ['heavy', 'universal'].includes(bay.bay_type)
+  return ['routine', 'universal', 'heavy'].includes(bay.bay_type)
+}
+
+function timeToMinutes(value) {
+  const [hours, minutes] = String(value).split(':').map(Number)
+  return hours * 60 + minutes
+}
+
+function minutesToTime(value) {
+  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
+}
+
+function singaporeDateFrom(value) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(value))
 }

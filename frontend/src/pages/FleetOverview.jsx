@@ -32,7 +32,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
           <Card title="Priority vehicles" eyebrow="Live feed" className="priority-card">
             <div className="table-wrap priority-table-scroll"><table><thead><tr><th>Vehicle</th><th>Status</th><th>Next maintenance cycle</th><th>Km to maintenance</th><th>Priority</th><th aria-label="Open"/></tr></thead>
               <tbody>{model.priority.map((item) => <tr key={item.lrv_id}>
-                <td><strong>{vehicleLabel(item.lrv_id)}</strong></td><td><Badge value={item.status}/></td>
+                <td><strong>{vehicleLabel(item.lrv_id)}</strong></td><td><Badge value={item.displayStatus}/></td>
                 <td><strong>{cycleLabel(item.cycle_type)}</strong></td>
                 <td><strong className={Number(item.km_to_next) <= 0 ? 'text-danger' : ''}>{maintenanceDistance(item.km_to_next)}</strong></td>
                 <td><span className={`priority-timing priority-${forecastTone(item.displayForecastDays)}`}>{priorityForecastLabel(item.displayForecastDays)}</span>{item.usingPlanningEstimate && <small>Planning estimate · 250 km/day</small>}</td>
@@ -72,25 +72,38 @@ function buildModel(data) {
   const summaries = new Map(data.mileage.map((row) => [row.lrv_id, row]))
   const now = new Date()
   const activeBookings = new Map(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => [booking.lrv_id, booking]))
+  const openBookings = new Map(data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status)).map((booking) => [booking.lrv_id, booking]))
   const combined = data.vehicles.map((vehicle) => {
-    const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id) }
+    const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id), openBooking: openBookings.get(vehicle.lrv_id) }
     const needsPlanningEstimate = row.forecast_days === null && Number(row.km_to_next) > 0
-    return { ...row, displayForecastDays: needsPlanningEstimate ? Math.ceil(Number(row.km_to_next) / FALLBACK_DAILY_KM) : row.forecast_days, usingPlanningEstimate: Boolean(needsPlanningEstimate) }
+    const displayForecastDays = needsPlanningEstimate ? Math.ceil(Number(row.km_to_next) / FALLBACK_DAILY_KM) : row.forecast_days
+    return { ...row, displayForecastDays, displayStatus: vehicleStatus(row, displayForecastDays), usingPlanningEstimate: Boolean(needsPlanningEstimate) }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
   const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || row.currentBooking || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
   const dueSoon = combined.filter((row) => row.displayForecastDays !== null && Number(row.displayForecastDays) >= 0 && Number(row.displayForecastDays) <= 7)
-  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.currentBooking ? 400 : 0) })).sort((a, b) => b.effectivePriority - a.effectivePriority).slice(0, 6)
+  const priority = combined.map((row) => ({ ...row, reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.openBooking ? 400 : 0) })).sort((a, b) => b.effectivePriority - a.effectivePriority).slice(0, 6)
   const leading = priority[0] || {}
   const next = leading.status === 'faulty'
     ? { status: 'faulty', title: `Replace ${vehicleLabel(leading.lrv_id)} at the next handover`, description: leading.reason, reason: 'A controlled stock change keeps the service slot covered while the faulty LRV returns to depot.', button: 'Open deployment plan', destination: 'deployment' }
+    : leading.status === 'maintenance' || leading.currentBooking
+      ? { title: `Complete the maintenance record for ${leading.lrv_id ? vehicleLabel(leading.lrv_id) : 'the current visit'}`, description: `${cycleLabel(leading.cycle_type)} work is under way or awaiting technician confirmation.`, reason: 'The cycle remains overdue until the technician records what was completed and the mileage at completion.', button: 'Open maintenance plan', destination: 'maintenance' }
+      : leading.openBooking
+        ? { title: `Review the booked slot for ${vehicleLabel(leading.lrv_id)}`, description: leading.reason, reason: 'This vehicle already has an unresolved depot booking, so another reservation would duplicate the visit.', button: 'Open maintenance plan', destination: 'maintenance' }
     : { title: `Reserve a depot slot for ${leading.lrv_id ? vehicleLabel(leading.lrv_id) : 'the next recall'}`, description: leading.reason || 'Review the upcoming maintenance forecast.', reason: 'Booking against forecast days gives planners time to bundle work and protect fleet availability.', button: 'Open maintenance plan', destination: 'maintenance' }
   const outlook = Array.from({ length: 14 }, (_, offset) => {
     const iso = singaporeDate(offset)
     return { date: iso, count: data.forecasts.filter((cycle) => cycle.forecast_date && daysFromToday(cycle.forecast_date) === offset).length }
   })
   const outlookScaleMax = Math.max(3, ...outlook.map((day) => day.count))
-  return { attention, dueSoon, priority, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.currentBooking).length }
+  return { attention, dueSoon, priority, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
+}
+
+function vehicleStatus(row, forecastDays) {
+  if (row.status === 'faulty') return 'faulty'
+  if (row.status === 'maintenance' || row.currentBooking) return 'maintenance'
+  if (Number(row.km_to_next) <= 0 || (forecastDays !== null && forecastDays !== undefined && Number(forecastDays) <= 7)) return 'maintenance_due'
+  return row.status
 }
 
 function weekday(value) {
@@ -122,7 +135,9 @@ function maintenanceDistance(km) {
 
 function reasonFor(row, staleAfterHours) {
   if (row.status === 'faulty') return row.lrv_id === 'D29' ? 'Brake pressure fault · withdraw from service' : 'Fault reported · telemetry also stale'
+  if (row.status === 'maintenance' && row.openBooking) return `${cycleLabel(row.openBooking.primary_cycle)} booking awaiting completion record`
   if (row.currentBooking) return `${cycleLabel(row.currentBooking.primary_cycle)} package occupying ${row.currentBooking.bay_id}`
+  if (row.openBooking) return `${cycleLabel(row.openBooking.primary_cycle)} depot visit already booked`
   if (Number(row.km_to_next) <= 0) return `${cycleLabel(row.cycle_type)} cycle overdue`
   if (Math.abs(Number(row.divergence_km || 0)) >= 50) return 'Physical and device mileage need review'
   if (Number(row.telemetry_age_hours) > staleAfterHours) return 'Telemetry is stale'

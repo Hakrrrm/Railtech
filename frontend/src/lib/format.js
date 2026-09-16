@@ -90,7 +90,7 @@ export function forecastLabel(days) {
 
 export function statusLabel(status) {
   return {
-    in_service: 'In service', maintenance: 'Maintenance', idle: 'Idle reserve', faulty: 'Faulty',
+    in_service: 'In service', maintenance: 'Under maintenance', maintenance_due: 'Maintenance due', idle: 'Idle', faulty: 'Faulty',
     proposed: 'Proposed', confirmed: 'Confirmed', completed: 'Completed', partially_completed: 'Partially completed', cancelled: 'Cancelled',
     active: 'Active', withdrawn: 'Withdrawn', planned: 'Planned',
   }[status] || status || 'Unknown'

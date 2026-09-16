@@ -23,8 +23,8 @@ export function MetricCard({ label, value, detail, tone = 'neutral', icon = 'tra
 }
 
 export function Badge({ value, tone }) {
-  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', partially_completed: 'warning', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
-  const vehicleStatus = ['faulty', 'maintenance', 'in_service', 'idle'].includes(value) ? ' badge-vehicle-status' : ''
+  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', maintenance_due: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', partially_completed: 'warning', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
+  const vehicleStatus = ['faulty', 'maintenance', 'maintenance_due', 'in_service', 'idle'].includes(value) ? ' badge-vehicle-status' : ''
   return <span className={`badge badge-${resolved}${vehicleStatus}`}>{statusLabel(value)}</span>
 }
 

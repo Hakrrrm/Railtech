@@ -39,7 +39,7 @@ export async function loadVehicleDetail(lrvId) {
 
 export async function loadMaintenancePlanning() {
   const db = client()
-  const [vehicles, mileage, forecasts, bookings, bays, rules, settings] = await Promise.all([
+  const [vehicles, mileage, forecasts, bookings, bays, rules, settings, duties] = await Promise.all([
     result(db.from('vehicles').select('*').order('lrv_id'), 'Vehicles'),
     result(db.from('vehicle_mileage_summary').select('lrv_id,lifetime_planning_mileage_km,device_odo_km').order('lrv_id'), 'Mileage summary'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Recall forecasts'),
@@ -47,8 +47,9 @@ export async function loadMaintenancePlanning() {
     result(db.from('depot_bays').select('*').order('bay_id'), 'Depot bays'),
     result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
     result(db.from('planning_settings').select('*').eq('fleet', 'splrt').limit(1), 'Planning settings'),
+    result(db.from('duty_assignments').select('*').in('status', ['planned', 'active']).order('duty_start'), 'Duty assignments'),
   ])
-  return { vehicles, mileage, forecasts, bookings, bays, rules, settings: settings[0] || null }
+  return { vehicles, mileage, forecasts, bookings, bays, rules, settings: settings[0] || null, duties }
 }
 
 export async function loadDeploymentPlanning() {
