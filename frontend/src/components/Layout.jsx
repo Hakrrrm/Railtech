@@ -28,7 +28,10 @@ export function Layout({ route, navigate, children, updatedAt }) {
   }
   return <div className="app-shell">
     <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      <div className="brand"><div className="brand-mark">LTA</div><div><strong>LRV Maintenance</strong><span>SPLRT Operations</span></div></div>
+      <div className="brand">
+        <div className="brand-logo"><img src="/lta-logo.png" alt="Land Transport Authority"/></div>
+        <div className="brand-copy"><strong>LRV Maintenance</strong><span>SPLRT Operations</span></div>
+      </div>
       <nav>{navItems.map(([page, icon, label]) => <button key={page} className={active === page ? 'active' : ''} onClick={() => go(page)}><Icon name={icon}/><span>{label}</span></button>)}</nav>
       <div className="sidebar-footer"><strong>Safe trains</strong><span>Reliable journeys</span></div>
     </aside>
