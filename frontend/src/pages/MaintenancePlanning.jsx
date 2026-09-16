@@ -24,6 +24,10 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   useEffect(() => { if (state.updatedAt) reportUpdatedAt(state.updatedAt) }, [state.updatedAt, reportUpdatedAt])
 
   const suggest = (item) => {
+    if (item.status === 'faulty') {
+      setToast({ message: `${vehicleLabel(item.lrv_id)} needs corrective fault work. A corrective work type must be added before it can be scheduled safely.`, tone: 'danger' })
+      return
+    }
     if (item.booking) {
       editBooking(item.booking)
       return
@@ -121,9 +125,9 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
           <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap">
             <div className="maintenance-priority-grid">{model.queue.map((item, index) => <article className="maintenance-priority-item" key={item.lrv_id}>
               <span className={`queue-rank ${Number(item.km_to_next) < 0 ? 'urgent' : ''}`}>{index + 1}</span>
-              <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {cycleLabel(item.cycle_type)}</strong><small>{queueForecastLabel(item)}</small></div>
-              <button className={`priority-add ${item.booking ? 'priority-booked' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Add ${vehicleLabel(item.lrv_id)} to the weekly depot schedule`} title={item.booking ? 'Open existing booking' : 'Find an available slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
-              <div className="maintenance-priority-meta"><Badge value={item.displayStatus}/><b>{queueDistanceLabel(item.km_to_next)}</b></div>
+              <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {item.status === 'faulty' ? 'Corrective repair' : cycleLabel(item.cycle_type)}</strong><small>{queueForecastLabel(item)}</small></div>
+              <button className={`priority-add ${item.booking ? 'priority-booked' : ''} ${item.status === 'faulty' ? 'priority-fault' : ''}`} onClick={() => suggest(item)} aria-label={item.status === 'faulty' ? `Review corrective work required for ${vehicleLabel(item.lrv_id)}` : item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Add ${vehicleLabel(item.lrv_id)} to the weekly depot schedule`} title={item.status === 'faulty' ? 'Corrective work needs a fault work type' : item.booking ? 'Open existing booking' : 'Find an available slot'}><Icon name={item.status === 'faulty' ? 'alert' : item.booking ? 'check' : 'plus'}/></button>
+              <div className="maintenance-priority-meta"><Badge value={item.status}/><b>{queueDistanceLabel(item)}</b></div>
             </article>)}</div>
           </Card>
         </div>
@@ -164,13 +168,13 @@ function buildMaintenanceModel(data, weekOffset = 0) {
   data.forecasts.forEach((item) => {
     const current = nearest.get(item.lrv_id)
     const status = vehicles.get(item.lrv_id)?.status
-    if (!current || Number(item.priority_score) > Number(current.priority_score)) nearest.set(item.lrv_id, { ...item, status, displayStatus: queueStatus(status, item), booking: bookings.get(item.lrv_id) })
+    if (!current || Number(item.priority_score) > Number(current.priority_score)) nearest.set(item.lrv_id, { ...item, status, booking: bookings.get(item.lrv_id) })
   })
-  const queue = [...nearest.values()].sort((a, b) => Number(b.priority_score) - Number(a.priority_score)).slice(0, 12)
+  const queue = [...nearest.values()].filter((item) => item.status !== 'maintenance').sort((a, b) => Number(b.priority_score) - Number(a.priority_score)).slice(0, 12)
   const weekStartOffset = weekOffset * 7
   return {
-    queue, overdue: queue.filter((row) => Number(row.km_to_next) < 0).length,
-    dueSoon: queue.filter((row) => row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
+    queue, overdue: queue.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,
+    dueSoon: queue.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
     confirmed: data.bookings.filter((row) => row.status === 'confirmed' && dayOffset(row.start_at) >= weekStartOffset && dayOffset(row.start_at) < weekStartOffset + 7).length,
     days: Array.from({ length: 7 }, (_, index) => singaporeDate(weekStartOffset + index)),
   }
@@ -184,12 +188,12 @@ function dayOffset(value) {
 function ScheduleRow({ bay, days, bookings, onEdit }) {
   const layout = layoutScheduleBookings(bookings, bay.bay_id, days)
   const lanes = Math.max(1, ...layout.map((item) => item.lane + 1))
-  const rowHeight = Math.max(86, lanes * 62 + 12)
+  const rowHeight = Math.max(106, lanes * 80 + 14)
   return <><div className="schedule-label" style={{ height: rowHeight }}><strong>{bay.name}</strong><small>{bay.opens_at.slice(0, 5)}–{bay.closes_at.slice(0, 5)}</small></div><div className="schedule-track" style={{ height: rowHeight }}>
     {layout.map(({ booking, startDay, endDay, lane, continuesBefore, continuesAfter }) => {
       const left = (startDay / days.length) * 100
       const width = ((endDay - startDay) / days.length) * 100
-      return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 6px)`, width: `calc(${width}% - 12px)`, top: 8 + lane * 62 }}>
+      return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 6px)`, width: `calc(${width}% - 12px)`, top: 8 + lane * 80 }}>
         <button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}>
           <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {cycleLabel(booking.primary_cycle)}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
           <Badge value={booking.status}/>
@@ -227,6 +231,7 @@ function bookingRangeLabel(booking, continuesBefore, continuesAfter) {
 }
 
 function queueForecastLabel(item) {
+  if (item.status === 'faulty') return item.lrv_id === 'D29' ? 'Brake fault requires workshop repair' : 'Fault requires workshop assessment'
   if (Number(item.km_to_next) < 0) return 'Overdue'
   if (Number(item.km_to_next) === 0) return 'Due today'
   if (item.status === 'maintenance') return 'Already in depot'
@@ -236,18 +241,12 @@ function queueForecastLabel(item) {
   return `Due in ${item.forecast_days} days`
 }
 
-function queueDistanceLabel(value) {
-  const km = Number(value)
+function queueDistanceLabel(item) {
+  if (item.status === 'faulty') return 'Non-mileage work'
+  const km = Number(item.km_to_next)
   if (km < 0) return `${formatKm(Math.abs(km))} overdue`
   if (km === 0) return 'Due now'
   return `${formatKm(km)} remaining`
-}
-
-function queueStatus(status, item) {
-  if (status === 'faulty') return 'faulty'
-  if (status === 'maintenance') return 'maintenance'
-  if (Number(item.km_to_next) <= 0 || (item.forecast_days !== null && item.forecast_days !== undefined && Number(item.forecast_days) <= 7)) return 'maintenance_due'
-  return status
 }
 
 function findAvailableSlot(rule, bays, bookings, duties, lrvId, preferredOffset) {

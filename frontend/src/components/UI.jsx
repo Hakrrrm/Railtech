@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Icon } from './Icons'
 import { statusLabel } from '../lib/format'
 
@@ -23,8 +24,8 @@ export function MetricCard({ label, value, detail, tone = 'neutral', icon = 'tra
 }
 
 export function Badge({ value, tone }) {
-  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', maintenance_due: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', partially_completed: 'warning', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
-  const vehicleStatus = ['faulty', 'maintenance', 'maintenance_due', 'in_service', 'idle'].includes(value) ? ' badge-vehicle-status' : ''
+  const resolved = tone || ({ faulty: 'danger', maintenance: 'warning', idle: 'info', in_service: 'success', confirmed: 'success', completed: 'success', partially_completed: 'warning', proposed: 'info', cancelled: 'muted', active: 'success', withdrawn: 'danger' }[value] || 'muted')
+  const vehicleStatus = ['faulty', 'maintenance', 'in_service', 'idle'].includes(value) ? ' badge-vehicle-status' : ''
   return <span className={`badge badge-${resolved}${vehicleStatus}`}>{statusLabel(value)}</span>
 }
 
@@ -44,6 +45,11 @@ export function Progress({ value, tone = 'teal' }) {
 }
 
 export function Toast({ message, tone = 'success', onClose }) {
+  useEffect(() => {
+    if (!message) return undefined
+    const timeout = globalThis.setTimeout(() => onClose?.(), 5000)
+    return () => globalThis.clearTimeout(timeout)
+  }, [message, onClose])
   if (!message) return null
   return <div className={`toast toast-${tone}`} role="status"><Icon name={tone === 'danger' ? 'alert' : 'check'}/><span>{message}</span><button aria-label="Dismiss" onClick={onClose}>×</button></div>
 }
