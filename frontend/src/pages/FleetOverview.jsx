@@ -5,6 +5,8 @@ import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
 
+const FALLBACK_DAILY_KM = 250
+
 const subscriptions = [
   { table: 'vehicles' }, { table: 'segment_traversals', event: 'INSERT' },
   { table: 'mileage_anchors', event: 'INSERT' }, { table: 'cycle_state' },
@@ -33,7 +35,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
                 <td><strong>{vehicleLabel(item.lrv_id)}</strong></td><td><Badge value={item.status}/></td>
                 <td><strong>{cycleLabel(item.cycle_type)}</strong></td>
                 <td><strong className={Number(item.km_to_next) <= 0 ? 'text-danger' : ''}>{maintenanceDistance(item.km_to_next)}</strong></td>
-                <td><span className={`priority-timing priority-${forecastTone(item.displayForecastDays)}`}>{priorityForecastLabel(item.displayForecastDays)}</span>{item.usingStoredForecast && <small>Last known forecast</small>}</td>
+                <td><span className={`priority-timing priority-${forecastTone(item.displayForecastDays)}`}>{priorityForecastLabel(item.displayForecastDays)}</span>{item.usingPlanningEstimate && <small>Planning estimate · 250 km/day</small>}</td>
                 <td><button className="icon-button" aria-label={`Open ${vehicleLabel(item.lrv_id)}`} onClick={() => navigate(`vehicle/${item.lrv_id}`)}><Icon name="chevron"/></button></td>
               </tr>)}</tbody></table></div>
           </Card>
@@ -72,8 +74,8 @@ function buildModel(data) {
   const activeBookings = new Map(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => [booking.lrv_id, booking]))
   const combined = data.vehicles.map((vehicle) => {
     const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id) }
-    const canUseStoredForecast = row.forecast_days === null && row.seeded_due_date
-    return { ...row, displayForecastDays: canUseStoredForecast ? daysFromToday(row.seeded_due_date) : row.forecast_days, usingStoredForecast: Boolean(canUseStoredForecast) }
+    const needsPlanningEstimate = row.forecast_days === null && Number(row.km_to_next) > 0
+    return { ...row, displayForecastDays: needsPlanningEstimate ? Math.ceil(Number(row.km_to_next) / FALLBACK_DAILY_KM) : row.forecast_days, usingPlanningEstimate: Boolean(needsPlanningEstimate) }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
   const attention = combined.filter((row) => row.status === 'faulty' || row.status === 'maintenance' || row.currentBooking || Number(row.km_to_next) <= 0 || Number(row.telemetry_age_hours) > staleAfterHours)
@@ -97,7 +99,7 @@ function weekday(value) {
 
 function priorityForecastLabel(days) {
   if (days === null || days === undefined) return 'Awaiting telemetry'
-  if (days < 0) return `${Math.abs(days)}d overdue`
+  if (days < 0) return 'Overdue'
   if (days === 0) return 'Due today'
   if (days === 1) return 'Due tomorrow'
   return `Due in ${days} days`

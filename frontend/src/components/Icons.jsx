@@ -11,6 +11,7 @@ const paths = {
   arrow: <path d="m15 18-6-6 6-6"/>,
   refresh: <><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></>,
   check: <path d="m5 12 4 4L19 6"/>,
+  plus: <path d="M12 5v14M5 12h14"/>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></>,
   evidence: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></>,
 }

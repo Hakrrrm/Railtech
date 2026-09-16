@@ -1,16 +1,16 @@
 import { Icon } from './Icons'
 import { statusLabel } from '../lib/format'
 
-export function PageHeader({ eyebrow, title, description, actions }) {
+export function PageHeader({ title, description, actions }) {
   return <div className="page-header">
-    <div><div className="eyebrow">{eyebrow}</div><h1>{title}</h1>{description && <p>{description}</p>}</div>
+    <div><h1>{title}</h1>{description && <p>{description}</p>}</div>
     {actions && <div className="page-actions">{actions}</div>}
   </div>
 }
 
-export function Card({ title, eyebrow, action, children, className = '' }) {
+export function Card({ title, action, children, className = '' }) {
   return <section className={`card ${className}`}>
-    {(title || action) && <header className="card-header"><div>{eyebrow && <div className="eyebrow">{eyebrow}</div>}<h2>{title}</h2></div>{action}</header>}
+    {(title || action) && <header className="card-header"><h2>{title}</h2>{action}</header>}
     <div className="card-body">{children}</div>
   </section>
 }
