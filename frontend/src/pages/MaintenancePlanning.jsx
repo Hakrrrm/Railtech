@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { cancelMaintenanceBooking, completeMaintenance, loadMaintenancePlanning, scheduleMaintenance } from '../lib/api'
-import { cycleLabel, formatDate, formatDateTime, formatDuration, formatKm, formatTime, singaporeDate, vehicleLabel } from '../lib/format'
+import { cycleLabel, formatDate, formatDateTime, formatDuration, formatKm, formatTime, singaporeDate, singaporeWeekStartOffset, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
@@ -49,7 +49,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       setToast({ message: `No compatible collision-free bay is available for ${vehicleLabel(item.lrv_id)} in the search window.`, tone: 'danger' })
       return
     }
-    setWeekOffset(Math.floor(dayOffset(draft.slot.start) / 7))
+    setWeekOffset(calendarWeekOffset(draft.slot.start))
     setForm({ ...emptyForm, ...draft.form, status: 'confirmed' })
     setEditing(true)
   }
@@ -86,7 +86,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       }
       if (scheduled.length) {
         const earliest = scheduled.reduce((value, item) => item.start < value ? item.start : value, scheduled[0].start)
-        setWeekOffset(Math.floor(dayOffset(earliest) / 7))
+        setWeekOffset(calendarWeekOffset(earliest))
         updateAutoScheduledIds([...autoScheduledIds, ...scheduled.map((item) => item.bookingId)])
       }
       const skippedText = skipped.length ? ` ${skipped.length} could not be placed: ${skipped.join(', ')}.` : ''
@@ -134,7 +134,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
 
   const editBooking = (booking) => {
     const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(booking.start_at))
-    setWeekOffset(Math.floor(dayOffset(booking.start_at) / 7))
+    setWeekOffset(calendarWeekOffset(booking.start_at))
     setForm({
       workType: booking.work_type || 'preventive', lrvId: booking.lrv_id,
       primaryCycle: booking.primary_cycle, bundledCycles: booking.bundled_cycles || [],
@@ -213,7 +213,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
 
         <div className="maintenance-planning-grid">
           <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => { setForm(emptyForm); setEditing(true) }}><Icon name="calendar"/>New booking</button></div></div>}>
-            <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
+            <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong>{day === singaporeDate() && <span className="schedule-today-badge">Today</span>}</div>)}</>
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
 
@@ -289,7 +289,7 @@ function buildMaintenanceModel(data, weekOffset = 0) {
   }))
   const allPriorities = [...corrective, ...preventive].sort(compareMaintenancePriority)
   const queue = allPriorities.filter((item) => item.booking?.status !== 'confirmed').slice(0, 12)
-  const weekStartOffset = weekOffset * 7
+  const weekStartOffset = singaporeWeekStartOffset() + weekOffset * 7
   return {
     queue, overdue: allPriorities.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,
     dueSoon: queue.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
@@ -301,6 +301,10 @@ function buildMaintenanceModel(data, weekOffset = 0) {
 function dayOffset(value) {
   const bookingDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(value))
   return Math.round((new Date(`${bookingDate}T00:00:00+08:00`) - new Date(`${singaporeDate()}T00:00:00+08:00`)) / 86400000)
+}
+
+function calendarWeekOffset(value) {
+  return Math.floor((dayOffset(value) - singaporeWeekStartOffset()) / 7)
 }
 
 function ScheduleRow({ bay, days, bookings, onEdit }) {

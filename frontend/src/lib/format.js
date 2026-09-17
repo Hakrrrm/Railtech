@@ -73,6 +73,11 @@ export function singaporeDate(offset = 0, now = new Date()) {
   return date.toISOString().slice(0, 10)
 }
 
+export function singaporeWeekStartOffset(now = new Date()) {
+  const weekday = new Date(`${singaporeDate(0, now)}T00:00:00Z`).getUTCDay()
+  return weekday === 0 ? -6 : 1 - weekday
+}
+
 export function daysFromToday(value) {
   if (!value) return null
   const today = new Date(`${singaporeDate()}T00:00:00+08:00`)

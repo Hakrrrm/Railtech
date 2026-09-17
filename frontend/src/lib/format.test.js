@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, singaporeDate, statusLabel, vehicleLabel } from './format'
+import { cycleLabel, forecastLabel, formatDuration, formatKm, qualityLabel, singaporeDate, singaporeWeekStartOffset, statusLabel, vehicleLabel } from './format'
 
 describe('operator-facing formatting', () => {
   it('translates distances and cycles into scan-friendly labels', () => {
@@ -32,5 +32,11 @@ describe('operator-facing formatting', () => {
     const singaporeMorning = new Date('2026-09-15T16:30:00Z')
     expect(singaporeDate(0, singaporeMorning)).toBe('2026-09-16')
     expect(singaporeDate(1, singaporeMorning)).toBe('2026-09-17')
+  })
+
+  it('anchors calendar weeks to Monday in Singapore', () => {
+    expect(singaporeWeekStartOffset(new Date('2026-09-17T04:00:00Z'))).toBe(-3)
+    expect(singaporeWeekStartOffset(new Date('2026-09-21T04:00:00Z'))).toBe(0)
+    expect(singaporeWeekStartOffset(new Date('2026-09-20T04:00:00Z'))).toBe(-6)
   })
 })
