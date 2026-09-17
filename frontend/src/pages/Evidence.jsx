@@ -16,7 +16,12 @@ export function Evidence({ navigate, reportUpdatedAt }) {
   const state = useSupabaseData(loadEvidence, [], subscriptions)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('all')
-  const rows = useMemo(() => buildRows(state.data, search, status), [state.data, search, status])
+  const [sort, setSort] = useState({ key: 'vehicle', direction: 'asc' })
+  const rows = useMemo(() => buildRows(state.data, search, status, sort), [state.data, search, status, sort])
+  const changeSort = (key) => setSort((current) => ({
+    key,
+    direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+  }))
 
   useEffect(() => {
     if (state.updatedAt) reportUpdatedAt(state.updatedAt)
@@ -38,13 +43,13 @@ export function Evidence({ navigate, reportUpdatedAt }) {
         <div className="table-wrap fleet-database-table">
           <table>
             <thead><tr>
-              <th>Vehicle number</th>
-              <th>Fleet</th>
-              <th>Operational status</th>
-              <th>Lifetime mileage</th>
-              <th>Mileage today</th>
-              <th>Last check date</th>
-              <th>Cycle completed</th>
+              <SortHeader label="Vehicle number" sortKey="vehicle" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Fleet" sortKey="fleet" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Operational status" sortKey="status" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Lifetime mileage" sortKey="lifetime" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Mileage today" sortKey="today" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Last check date" sortKey="lastCheck" sort={sort} onSort={changeSort}/>
+              <SortHeader label="Cycle completed" sortKey="cycle" sort={sort} onSort={changeSort}/>
               <th aria-label="Open vehicle"/>
             </tr></thead>
             <tbody>
@@ -67,7 +72,17 @@ export function Evidence({ navigate, reportUpdatedAt }) {
   </>
 }
 
-function buildRows(data, search, status) {
+function SortHeader({ label, sortKey, sort, onSort }) {
+  const active = sort.key === sortKey
+  const direction = active ? sort.direction : 'none'
+  return <th aria-sort={active ? `${sort.direction}ending` : 'none'}>
+    <button className={`table-sort ${active ? 'active' : ''}`} onClick={() => onSort(sortKey)}>
+      <span>{label}</span><span className="table-sort-arrow" aria-hidden="true">{direction === 'asc' ? '↑' : direction === 'desc' ? '↓' : '↕'}</span>
+    </button>
+  </th>
+}
+
+function buildRows(data, search, status, sort) {
   if (!data) return []
   const latestChecks = new Map()
   data.events.forEach((event) => {
@@ -88,6 +103,36 @@ function buildRows(data, search, status) {
     })
     .filter((vehicle) => status === 'all' || vehicle.status === status)
     .filter((vehicle) => !query || vehicle.lrv_id.includes(query) || vehicleLabel(vehicle.lrv_id).includes(query) || String(vehicle.fleet || '').toUpperCase().includes(query))
+    .sort((left, right) => compareRows(left, right, sort))
+}
+
+const sortValues = {
+  vehicle: (row) => Number(String(row.lrv_id).replace(/\D/g, '')),
+  fleet: (row) => row.fleet,
+  status: (row) => row.status,
+  lifetime: (row) => row.lifetimeMileage,
+  today: (row) => row.mileage_today_km,
+  lastCheck: (row) => row.lastCheck?.completed_at ? new Date(row.lastCheck.completed_at).getTime() : null,
+  cycle: (row) => row.lastCheck?.work_type === 'corrective' ? Number.MAX_SAFE_INTEGER : row.lastCheck?.primary_cycle,
+}
+
+function compareRows(left, right, sort) {
+  const leftValue = sortValues[sort.key](left)
+  const rightValue = sortValues[sort.key](right)
+  const leftMissing = leftValue === null || leftValue === undefined || Number.isNaN(leftValue)
+  const rightMissing = rightValue === null || rightValue === undefined || Number.isNaN(rightValue)
+  if (leftMissing !== rightMissing) return leftMissing ? 1 : -1
+  if (leftMissing) return vehicleNumber(left) - vehicleNumber(right)
+  const comparison = typeof leftValue === 'string'
+    ? leftValue.localeCompare(String(rightValue), 'en-SG', { numeric: true })
+    : Number(leftValue) - Number(rightValue)
+  return comparison === 0
+    ? vehicleNumber(left) - vehicleNumber(right)
+    : comparison * (sort.direction === 'asc' ? 1 : -1)
+}
+
+function vehicleNumber(row) {
+  return Number(String(row.lrv_id).replace(/\D/g, ''))
 }
 
 function completedCycle(event) {
