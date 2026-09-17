@@ -13,6 +13,7 @@ const subscriptions = [
 ]
 
 const emptyForm = { workType: 'preventive', lrvId: '', primaryCycle: 2000, bundledCycles: [2000], faultId: '', durationMinutes: 120, bayId: '', date: singaporeDate(1), time: '09:00', status: 'proposed', notes: '' }
+const autoScheduleStorageKey = 'railtech-auto-schedule-bookings'
 
 export function MaintenancePlanning({ reportUpdatedAt }) {
   const state = useSupabaseData(loadMaintenancePlanning, [], subscriptions)
@@ -23,7 +24,9 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   const [saving, setSaving] = useState(false)
   const [weekOffset, setWeekOffset] = useState(0)
   const [priorityFilter, setPriorityFilter] = useState('all')
+  const [autoScheduledIds, setAutoScheduledIds] = useState(readAutoScheduledIds)
   const model = useMemo(() => buildMaintenanceModel(state.data, weekOffset), [state.data, weekOffset])
+  const pendingAutoBookings = useMemo(() => (state.data?.bookings || []).filter((booking) => autoScheduledIds.includes(booking.id) && booking.status === 'proposed'), [state.data, autoScheduledIds])
   const visibleQueue = useMemo(() => model?.queue.filter((item) => matchesMaintenancePriorityFilter(item, priorityFilter)) || [], [model, priorityFilter])
   const queueCounts = useMemo(() => ({
     today: model?.queue.filter((item) => maintenancePriorityCategory(item) === 'today').length || 0,
@@ -58,8 +61,8 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       return
     }
     setSaving(true)
-    const provisionalBookings = [...state.data.bookings]
-    const scheduled = []
+      const provisionalBookings = [...state.data.bookings]
+      const scheduled = []
     const skipped = []
     try {
       for (const item of pending) {
@@ -70,13 +73,13 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         }
         try {
           const bookingId = await scheduleMaintenance({
-            ...draft.form, startAt: draft.slot.start.toISOString(), endAt: draft.slot.end.toISOString(), status: 'confirmed',
+            ...draft.form, startAt: draft.slot.start.toISOString(), endAt: draft.slot.end.toISOString(), status: 'proposed',
           })
           provisionalBookings.push({
             id: bookingId, lrv_id: draft.form.lrvId, bay_id: draft.form.bayId,
-            start_at: draft.slot.start.toISOString(), end_at: draft.slot.end.toISOString(), status: 'confirmed',
+            start_at: draft.slot.start.toISOString(), end_at: draft.slot.end.toISOString(), status: 'proposed',
           })
-          scheduled.push({ lrvId: item.lrv_id, start: draft.slot.start })
+          scheduled.push({ bookingId, lrvId: item.lrv_id, start: draft.slot.start })
         } catch {
           skipped.push(vehicleLabel(item.lrv_id))
         }
@@ -84,11 +87,49 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       if (scheduled.length) {
         const earliest = scheduled.reduce((value, item) => item.start < value ? item.start : value, scheduled[0].start)
         setWeekOffset(Math.floor(dayOffset(earliest) / 7))
+        updateAutoScheduledIds([...autoScheduledIds, ...scheduled.map((item) => item.bookingId)])
       }
       const skippedText = skipped.length ? ` ${skipped.length} could not be placed: ${skipped.join(', ')}.` : ''
-      setToast({ message: `${scheduled.length} priority booking${scheduled.length === 1 ? '' : 's'} scheduled and confirmed.${skippedText}`, tone: scheduled.length ? 'success' : 'danger' })
+      setToast({ message: `${scheduled.length} priority booking${scheduled.length === 1 ? '' : 's'} proposed in blue. Review the plan, then confirm it.${skippedText}`, tone: scheduled.length ? 'success' : 'danger' })
       await state.refresh(true)
     } finally { setSaving(false) }
+  }
+
+  const confirmAutoSchedule = async () => {
+    if (!pendingAutoBookings.length) {
+      updateAutoScheduledIds([])
+      setToast({ message: 'There are no auto-scheduled bookings awaiting confirmation.', tone: 'danger' })
+      return
+    }
+    setSaving(true)
+    const failed = []
+    let confirmed = 0
+    try {
+      for (const booking of pendingAutoBookings) {
+        try {
+          await scheduleMaintenance({
+            lrvId: booking.lrv_id, primaryCycle: booking.primary_cycle,
+            bundledCycles: booking.bundled_cycles || [], bayId: booking.bay_id,
+            startAt: booking.start_at, endAt: booking.end_at, status: 'confirmed',
+            notes: booking.notes, bookingId: booking.id, workType: booking.work_type || 'preventive',
+            faultId: booking.fault_id || null,
+          })
+          confirmed += 1
+        } catch {
+          failed.push(booking)
+        }
+      }
+      updateAutoScheduledIds(failed.map((booking) => booking.id))
+      const failedText = failed.length ? ` ${failed.length} remained blue because current operating constraints prevented confirmation: ${failed.map((booking) => vehicleLabel(booking.lrv_id)).join(', ')}.` : ''
+      setToast({ message: `${confirmed} booking${confirmed === 1 ? '' : 's'} confirmed; confirmed slots are now green.${failedText}`, tone: confirmed ? 'success' : 'danger' })
+      await state.refresh(true)
+    } finally { setSaving(false) }
+  }
+
+  const updateAutoScheduledIds = (ids) => {
+    const uniqueIds = [...new Set(ids.filter(Boolean))]
+    setAutoScheduledIds(uniqueIds)
+    try { globalThis.localStorage.setItem(autoScheduleStorageKey, JSON.stringify(uniqueIds)) } catch { /* storage is optional */ }
   }
 
   const editBooking = (booking) => {
@@ -170,7 +211,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         </div>
 
         <div className="maintenance-planning-grid">
-          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions"><button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button><button className="button button-primary button-compact" disabled={saving} onClick={() => setEditing(true)}><Icon name="calendar"/>New booking</button></div></div>}>
+          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => setEditing(true)}><Icon name="calendar"/>New booking</button></div></div>}>
             <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
@@ -429,4 +470,11 @@ function minutesToTime(value) {
 
 function singaporeDateFrom(value) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Singapore' }).format(new Date(value))
+}
+
+function readAutoScheduledIds() {
+  try {
+    const value = JSON.parse(globalThis.localStorage.getItem(autoScheduleStorageKey) || '[]')
+    return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : []
+  } catch { return [] }
 }
