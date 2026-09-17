@@ -29,6 +29,17 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
           <MetricCard label="Spares on reserve" value={model.spares} detail="Idle, serviceable and unbooked" tone="info" icon="train"/>
         </div>
 
+        <Card title="14-day maintenance outlook">
+          <div className="outlook-chart">
+            <div className="outlook-axis-label">Maintenance blocks scheduled</div>
+            <div className="outlook-scale" aria-label={`Scale from zero to ${model.outlookScaleMax}`}>{Array.from({ length: model.outlookScaleMax + 1 }, (_, index) => <span key={index}>{model.outlookScaleMax - index}</span>)}</div>
+            <div className="outlook" style={{ '--outlook-grid-step': `${100 / model.outlookScaleMax}%` }}>{model.outlook.map((day) => <div className="outlook-day" key={day.date} title={`${day.count} maintenance cycle${day.count === 1 ? '' : 's'}`}>
+              <div className="bar-area"><span style={{ height: `${day.count / model.outlookScaleMax * 100}%` }} className={day.count ? 'bar-active' : ''}/></div>
+              <small><span>{formatDate(day.date)}</span><span>{weekday(day.date)}</span></small>
+            </div>)}</div>
+          </div>
+        </Card>
+
         <div className="overview-grid">
           <Card title="Priority vehicles" className="priority-card" action={<select className="priority-filter" aria-label="Filter priority vehicles" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
             <option value="all">All priorities ({model.priority.length})</option>
@@ -52,17 +63,6 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
             <button className="button button-primary button-full" onClick={() => navigate(model.next.destination)}>{model.next.button}<Icon name="chevron"/></button>
           </Card>
         </div>
-
-        <Card title="14-day maintenance outlook">
-          <div className="outlook-chart">
-            <div className="outlook-axis-label">Maintenance blocks scheduled</div>
-            <div className="outlook-scale" aria-label={`Scale from zero to ${model.outlookScaleMax}`}>{Array.from({ length: model.outlookScaleMax + 1 }, (_, index) => <span key={index}>{model.outlookScaleMax - index}</span>)}</div>
-            <div className="outlook" style={{ '--outlook-grid-step': `${100 / model.outlookScaleMax}%` }}>{model.outlook.map((day) => <div className="outlook-day" key={day.date} title={`${day.count} maintenance cycle${day.count === 1 ? '' : 's'}`}>
-              <div className="bar-area"><span style={{ height: `${day.count / model.outlookScaleMax * 100}%` }} className={day.count ? 'bar-active' : ''}/></div>
-              <small><span>{formatDate(day.date)}</span><span>{weekday(day.date)}</span></small>
-            </div>)}</div>
-          </div>
-        </Card>
       </>}
     </DataBoundary>
   </div>
