@@ -287,11 +287,12 @@ function buildMaintenanceModel(data, weekOffset = 0) {
     lrv_id: fault.lrv_id, work_type: 'corrective', status: vehicles.get(fault.lrv_id)?.status || 'faulty',
     fault, booking: faultBookings.get(fault.id),
   }))
-  const queue = [...corrective, ...preventive].sort(compareMaintenancePriority).slice(0, 12)
+  const allPriorities = [...corrective, ...preventive].sort(compareMaintenancePriority)
+  const queue = allPriorities.filter((item) => item.booking?.status !== 'confirmed').slice(0, 12)
   const weekStartOffset = weekOffset * 7
   return {
-    queue, overdue: queue.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,
-    dueSoon: queue.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
+    queue, overdue: allPriorities.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,
+    dueSoon: allPriorities.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
     confirmed: data.bookings.filter((row) => row.status === 'confirmed' && dayOffset(row.start_at) >= weekStartOffset && dayOffset(row.start_at) < weekStartOffset + 7).length,
     days: Array.from({ length: 7 }, (_, index) => singaporeDate(weekStartOffset + index)),
   }

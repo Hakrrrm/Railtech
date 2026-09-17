@@ -1817,11 +1817,11 @@ begin
       status = seed.status, notes = seed.notes, updated_at = now()
   from (values
     ('demo:booking:D18', 2000, array[2000], 'SPLRT-BAY-1', 0, time '09:00', 0, time '11:00', 'confirmed', 'Overdue 2K recall; vehicle already in depot'),
-    ('demo:booking:D07', 13000, array[2000,13000], 'SPLRT-BAY-1', 1, time '09:00', 1, time '13:00', 'proposed', 'Bundle the 2K and 13K cycles in one visit'),
+    ('demo:booking:D07', 13000, array[2000,13000], 'SPLRT-BAY-1', 1, time '09:00', 1, time '13:00', 'confirmed', 'Bundle the 2K and 13K cycles in one visit'),
     ('demo:booking:D24', 13000, array[2000,13000], 'SPLRT-BAY-1', 2, time '13:00', 2, time '17:00', 'confirmed', 'Routine planned maintenance'),
     ('demo:booking:D25', 40000, array[2000,13000,40000], 'SPLRT-BAY-2', 3, time '08:00', 3, time '14:00', 'confirmed', '40K package with nested-cycle completion'),
-    ('demo:booking:D26', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2', 4, time '08:00', 5, time '08:00', 'proposed', '24-hour package with continuous bay occupation'),
-    ('demo:booking:D22', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2', 6, time '08:00', 27, time '08:00', 'proposed', 'Three-week package including weekends and waiting time')
+    ('demo:booking:D26', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2', 4, time '08:00', 5, time '08:00', 'confirmed', '24-hour package with continuous bay occupation'),
+    ('demo:booking:D22', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2', 6, time '08:00', 27, time '08:00', 'confirmed', 'Three-week package including weekends and waiting time')
   ) as seed(demo_key, primary_cycle, bundled_cycles, bay_id, start_days, start_time, end_days, end_time, status, notes)
   where booking.demo_key = seed.demo_key;
 
@@ -2095,6 +2095,11 @@ begin
   where source = 'technician_ocr'
     and lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$';
   perform reset_dashboard_demo_core();
+
+  update maintenance_bookings
+  set status = 'confirmed', updated_at = now()
+  where demo_key in ('demo:booking:D07', 'demo:booking:D26', 'demo:booking:D22')
+    and status = 'proposed';
 
   select max(ts)
   into v_latest_demo_telemetry

@@ -468,7 +468,7 @@ insert into maintenance_bookings (
     current_date + time '09:00', current_date + time '11:00', 'confirmed',
     'Overdue 2K recall; vehicle already in depot'),
   ('demo:booking:D07', 'D07', 'preventive', 13000, array[2000,13000], 'SPLRT-BAY-1',
-    current_date + 1 + time '09:00', current_date + 1 + time '13:00', 'proposed',
+    current_date + 1 + time '09:00', current_date + 1 + time '13:00', 'confirmed',
     'Bundle the 2K and 13K cycles in one visit'),
   ('demo:booking:D24', 'D24', 'preventive', 13000, array[2000,13000], 'SPLRT-BAY-1',
     current_date + 2 + time '13:00', current_date + 2 + time '17:00', 'confirmed',
@@ -477,10 +477,10 @@ insert into maintenance_bookings (
     current_date + 3 + time '08:00', current_date + 3 + time '14:00', 'confirmed',
     '40K package with nested-cycle completion'),
   ('demo:booking:D26', 'D26', 'preventive', 120000, array[2000,13000,40000,120000], 'SPLRT-BAY-2',
-    current_date + 4 + time '08:00', current_date + 5 + time '08:00', 'proposed',
+    current_date + 4 + time '08:00', current_date + 5 + time '08:00', 'confirmed',
     '24-hour package with continuous bay occupation'),
   ('demo:booking:D22', 'D22', 'preventive', 360000, array[2000,13000,40000,120000,360000], 'SPLRT-BAY-2',
-    current_date + 6 + time '08:00', current_date + 27 + time '08:00', 'proposed',
+    current_date + 6 + time '08:00', current_date + 27 + time '08:00', 'confirmed',
     'Three-week package including weekends and waiting time');
 
 insert into maintenance_events (
