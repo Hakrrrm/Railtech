@@ -41,40 +41,54 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       editBooking(item.booking)
       return
     }
-    if (item.work_type === 'corrective') {
-      const fault = item.fault
-      const rule = { duration_minutes: fault.estimated_duration_minutes, compatible_bay_type: fault.required_bay_type }
-      const slot = findAvailableSlot(rule, state.data.bays, state.data.bookings, state.data.duties, item.lrv_id, 0)
-      if (!slot) {
-        setToast({ message: `No collision-free ${fault.required_bay_type} bay is available for ${vehicleLabel(item.lrv_id)} in the next six weeks.`, tone: 'danger' })
-        return
-      }
-      setWeekOffset(Math.floor(dayOffset(slot.start) / 7))
-      setForm({
-        ...emptyForm, workType: 'corrective', lrvId: item.lrv_id, primaryCycle: null,
-        bundledCycles: [], faultId: fault.id, durationMinutes: Number(fault.estimated_duration_minutes),
-        bayId: slot.bay.bay_id, date: singaporeDateFrom(slot.start), time: formatTime(slot.start),
-        notes: `${fault.fault_code}: ${fault.description} · first compatible free slot selected automatically`,
-      })
-      setEditing(true)
+    const draft = buildSuggestedBooking(item, state.data, state.data.bookings)
+    if (!draft) {
+      setToast({ message: `No compatible collision-free bay is available for ${vehicleLabel(item.lrv_id)} in the search window.`, tone: 'danger' })
       return
     }
-    const approaching = state.data.forecasts.filter((cycle) => cycle.lrv_id === item.lrv_id && cycle.forecast_days !== null && Number(cycle.forecast_days) <= Number(item.forecast_days) + 2).map((cycle) => Number(cycle.cycle_type))
-    const primaryCycle = Math.max(Number(item.cycle_type), ...approaching)
-    const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle)
-    const cycles = rule?.included_cycles?.map(Number) || [primaryCycle]
-    const forecastDays = Number(item.forecast_days)
-    const hasForecast = item.forecast_days !== null && item.forecast_days !== undefined && Number.isFinite(forecastDays)
-    // Start on the forecast due date, then walk forward to the next free slot.
-    const preferredOffset = hasForecast ? Math.max(0, Math.ceil(forecastDays)) : 1
-    const slot = findAvailableSlot(rule, state.data.bays, state.data.bookings, state.data.duties, item.lrv_id, preferredOffset)
-    if (!slot) {
-      setToast({ message: `No compatible free bay was found for ${vehicleLabel(item.lrv_id)} in the next six weeks.`, tone: 'danger' })
-      return
-    }
-    setWeekOffset(Math.floor(dayOffset(slot.start) / 7))
-    setForm({ ...emptyForm, workType: 'preventive', lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, durationMinutes: Number(rule?.duration_minutes || 120), bayId: slot.bay.bay_id, date: singaporeDateFrom(slot.start), time: formatTime(slot.start), notes: cycles.length > 1 ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · earliest compatible slot on or after the forecast due date` : `${cycleLabel(primaryCycle)} recall · earliest compatible slot on or after the forecast due date` })
+    setWeekOffset(Math.floor(dayOffset(draft.slot.start) / 7))
+    setForm({ ...emptyForm, ...draft.form })
     setEditing(true)
+  }
+
+  const autoSchedule = async () => {
+    const pending = model.queue.filter((item) => !item.booking)
+    if (!pending.length) {
+      setToast({ message: 'Every priority LRV already has an active booking.', tone: 'success' })
+      return
+    }
+    setSaving(true)
+    const provisionalBookings = [...state.data.bookings]
+    const scheduled = []
+    const skipped = []
+    try {
+      for (const item of pending) {
+        const draft = buildSuggestedBooking(item, state.data, provisionalBookings)
+        if (!draft) {
+          skipped.push(vehicleLabel(item.lrv_id))
+          continue
+        }
+        try {
+          const bookingId = await scheduleMaintenance({
+            ...draft.form, startAt: draft.slot.start.toISOString(), endAt: draft.slot.end.toISOString(), status: 'confirmed',
+          })
+          provisionalBookings.push({
+            id: bookingId, lrv_id: draft.form.lrvId, bay_id: draft.form.bayId,
+            start_at: draft.slot.start.toISOString(), end_at: draft.slot.end.toISOString(), status: 'confirmed',
+          })
+          scheduled.push({ lrvId: item.lrv_id, start: draft.slot.start })
+        } catch {
+          skipped.push(vehicleLabel(item.lrv_id))
+        }
+      }
+      if (scheduled.length) {
+        const earliest = scheduled.reduce((value, item) => item.start < value ? item.start : value, scheduled[0].start)
+        setWeekOffset(Math.floor(dayOffset(earliest) / 7))
+      }
+      const skippedText = skipped.length ? ` ${skipped.length} could not be placed: ${skipped.join(', ')}.` : ''
+      setToast({ message: `${scheduled.length} priority booking${scheduled.length === 1 ? '' : 's'} scheduled and confirmed.${skippedText}`, tone: scheduled.length ? 'success' : 'danger' })
+      await state.refresh(true)
+    } finally { setSaving(false) }
   }
 
   const editBooking = (booking) => {
@@ -146,7 +160,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   }
 
   return <>
-    <PageHeader title="Maintenance planning" actions={<button className="button button-primary" onClick={() => setEditing(true)}><Icon name="calendar"/>New booking</button>}/>
+    <PageHeader title="Maintenance planning"/>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
         <div className="metric-grid metric-grid-three">
@@ -156,7 +170,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         </div>
 
         <div className="maintenance-planning-grid">
-          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div>}>
+          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions"><button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button><button className="button button-primary button-compact" disabled={saving} onClick={() => setEditing(true)}><Icon name="calendar"/>New booking</button></div></div>}>
             <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
@@ -327,6 +341,48 @@ function findBookingConflict(bookings, bayId, lrvId, start, end, bookingId) {
   const vehicle = active.find((booking) => booking.lrv_id === lrvId && new Date(booking.start_at) < end && new Date(booking.end_at) > start)
   if (vehicle) return `${vehicleLabel(lrvId)} already has a depot booking during this period.`
   return null
+}
+
+function buildSuggestedBooking(item, data, bookings) {
+  if (item.work_type === 'corrective') {
+    const fault = item.fault
+    const rule = { duration_minutes: fault.estimated_duration_minutes, compatible_bay_type: fault.required_bay_type }
+    const slot = findAvailableSlot(rule, data.bays, bookings, data.duties, item.lrv_id, 0)
+    if (!slot) return null
+    return {
+      slot,
+      form: {
+        workType: 'corrective', lrvId: item.lrv_id, primaryCycle: null, bundledCycles: [], faultId: fault.id,
+        durationMinutes: Number(fault.estimated_duration_minutes), bayId: slot.bay.bay_id,
+        date: singaporeDateFrom(slot.start), time: formatTime(slot.start), status: 'proposed',
+        notes: `${fault.fault_code}: ${fault.description} · earliest compatible free slot selected automatically`,
+      },
+    }
+  }
+
+  const forecastDays = Number(item.forecast_days)
+  const hasForecast = item.forecast_days !== null && item.forecast_days !== undefined && Number.isFinite(forecastDays)
+  const approaching = data.forecasts
+    .filter((cycle) => cycle.lrv_id === item.lrv_id && cycle.forecast_days !== null
+      && Number(cycle.forecast_days) <= (hasForecast ? forecastDays : 0) + 2)
+    .map((cycle) => Number(cycle.cycle_type))
+  const primaryCycle = Math.max(Number(item.cycle_type), ...approaching)
+  const rule = data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle)
+  const cycles = rule?.included_cycles?.map(Number) || [primaryCycle]
+  const preferredOffset = hasForecast ? Math.max(0, Math.ceil(forecastDays)) : 1
+  const slot = findAvailableSlot(rule, data.bays, bookings, data.duties, item.lrv_id, preferredOffset)
+  if (!slot) return null
+  return {
+    slot,
+    form: {
+      workType: 'preventive', lrvId: item.lrv_id, primaryCycle, bundledCycles: cycles, faultId: '',
+      durationMinutes: Number(rule?.duration_minutes || 120), bayId: slot.bay.bay_id,
+      date: singaporeDateFrom(slot.start), time: formatTime(slot.start), status: 'proposed',
+      notes: cycles.length > 1
+        ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · earliest compatible slot on or after the forecast due date`
+        : `${cycleLabel(primaryCycle)} recall · earliest compatible slot on or after the forecast due date`,
+    },
+  }
 }
 
 function findAvailableSlot(rule, bays, bookings, duties, lrvId, preferredOffset) {
