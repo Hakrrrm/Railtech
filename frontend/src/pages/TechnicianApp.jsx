@@ -123,7 +123,7 @@ export function TechnicianApp({ navigate }) {
           <div className="tech-bento-primary"><span>On-board device estimate</span><strong>{formatKm(selected.deviceMileage, 1)}</strong><small>Live mileage estimate</small></div>
           <div><span>Previous hubometer reading</span><strong>{formatKm(selected.lastPhysicalCheck, 1)}</strong><small>{selected.lastPhysicalCheckAt ? formatDate(selected.lastPhysicalCheckAt) : 'No previous check'}</small></div>
           <div><span>Appointment</span><strong>{formatTime(selected.booking.start_at)}</strong><small>{formatDate(selected.booking.start_at)} · {selected.bayName}</small></div>
-          <div><span>Maintenance due</span><strong>{selected.scope}</strong><small>{selected.workType === 'corrective' ? 'Non-mileage repair' : forecastLabel(selected.forecastDays)}</small></div>
+          <div><span>Maintenance due</span><strong>{selected.scope}</strong>{selected.workType === 'corrective' ? <small>Non-mileage repair</small> : selected.forecastDays !== null && selected.forecastDays !== undefined ? <small>{forecastLabel(selected.forecastDays)}</small> : null}</div>
         </div>
         <div className={`tech-assignment ${selected.workType === 'corrective' ? 'fault' : ''}`}><strong>Work assignment</strong><p>{selected.description}</p>{selected.booking.notes && <small>Planner notes: {selected.booking.notes}</small>}</div>
         {selected.workType === 'preventive' && <div className="tech-cycle-checklist"><div><strong>Cycles actually completed</strong><small>Due scope is preselected</small></div><div>{selected.assignedCycles.map((cycle) => <label key={cycle}><input type="checkbox" checked={completedCycles.includes(cycle)} onChange={() => toggleCycle(cycle)}/><span>{cycleLabel(cycle)}</span></label>)}</div></div>}
@@ -181,7 +181,9 @@ function buildJobs(data) {
       lastPhysicalCheck: Number(summary.last_physical_check_km || 0),
       lastPhysicalCheckAt: summary.last_physical_check_at,
       description: maintenanceDescription(workType, booking.primary_cycle, fault),
-      assignmentSummary: workType === 'corrective' ? (fault?.description || 'Fault diagnosis and repair') : `${forecastLabel(forecast?.forecast_days)} · ${assignedCycles.map(cycleLabel).join(' + ')}`,
+      assignmentSummary: workType === 'corrective'
+        ? (fault?.description || 'Fault diagnosis and repair')
+        : [forecast?.forecast_days !== null && forecast?.forecast_days !== undefined ? forecastLabel(forecast.forecast_days) : null, assignedCycles.map(cycleLabel).join(' + ')].filter(Boolean).join(' · '),
     }
   }).sort((a, b) => new Date(a.booking.start_at) - new Date(b.booking.start_at))
 }
