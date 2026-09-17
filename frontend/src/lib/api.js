@@ -14,14 +14,15 @@ async function result(query, label) {
 
 export async function loadFleetOverview() {
   const db = client()
-  const [vehicles, mileage, forecasts, bookings, settings] = await Promise.all([
+  const [vehicles, mileage, forecasts, bookings, settings, faults] = await Promise.all([
     result(db.from('vehicles').select('*').order('lrv_id'), 'Vehicles'),
     result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'Mileage summary'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Cycle forecasts'),
     result(db.from('maintenance_bookings').select('*').in('status', ['proposed', 'confirmed']).order('start_at'), 'Bookings'),
     result(db.from('planning_settings').select('*').eq('fleet', 'splrt').limit(1), 'Planning settings'),
+    result(db.from('maintenance_faults').select('*').in('status', ['open', 'scheduled']).order('reported_at'), 'Maintenance faults'),
   ])
-  return { vehicles, mileage, forecasts, bookings, settings: settings[0] || null }
+  return { vehicles, mileage, forecasts, bookings, settings: settings[0] || null, faults }
 }
 
 export async function loadVehicleDetail(lrvId) {

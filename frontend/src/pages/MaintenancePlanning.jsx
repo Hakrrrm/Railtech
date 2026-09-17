@@ -4,6 +4,7 @@ import { cycleLabel, formatDate, formatDateTime, formatDuration, formatKm, forma
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
+import { compareMaintenancePriority } from '../lib/maintenancePriority'
 
 const subscriptions = [
   { table: 'maintenance_bookings' }, { table: 'maintenance_events', event: 'INSERT' },
@@ -208,18 +209,18 @@ function buildMaintenanceModel(data, weekOffset = 0) {
   data.forecasts.forEach((item) => {
     const current = nearest.get(item.lrv_id)
     const status = vehicles.get(item.lrv_id)?.status
-    if (!current || Number(item.priority_score) > Number(current.priority_score)) nearest.set(item.lrv_id, { ...item, work_type: 'preventive', status, booking: bookings.get(item.lrv_id) })
+    const candidate = { ...item, work_type: 'preventive', status, booking: bookings.get(item.lrv_id) }
+    if (!current || compareMaintenancePriority(candidate, current) < 0) nearest.set(item.lrv_id, candidate)
   })
   const preventive = [...nearest.values()].filter((item) =>
     !['maintenance', 'faulty'].includes(item.status)
     && (Number(item.km_to_next) <= 0 || item.forecast_days !== null && item.forecast_days !== undefined)
   )
-  const severityScore = { critical: 10000, high: 9000, medium: 8000, low: 7000 }
   const corrective = (data.faults || []).filter((fault) => ['open', 'scheduled'].includes(fault.status)).map((fault) => ({
     lrv_id: fault.lrv_id, work_type: 'corrective', status: vehicles.get(fault.lrv_id)?.status || 'faulty',
-    fault, booking: faultBookings.get(fault.id), priority_score: severityScore[fault.severity] || 7000,
+    fault, booking: faultBookings.get(fault.id),
   }))
-  const queue = [...corrective, ...preventive].sort((a, b) => Number(b.priority_score) - Number(a.priority_score)).slice(0, 12)
+  const queue = [...corrective, ...preventive].sort(compareMaintenancePriority).slice(0, 12)
   const weekStartOffset = weekOffset * 7
   return {
     queue, overdue: queue.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,

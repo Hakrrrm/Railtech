@@ -4,11 +4,12 @@ import { cycleLabel, daysFromToday, formatDate, singaporeDate, vehicleLabel } fr
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
+import { compareMaintenancePriority } from '../lib/maintenancePriority'
 
 const subscriptions = [
   { table: 'vehicles' }, { table: 'segment_traversals', event: 'INSERT' },
   { table: 'mileage_anchors', event: 'INSERT' }, { table: 'cycle_state' },
-  { table: 'maintenance_bookings' }, { table: 'planning_settings' },
+  { table: 'maintenance_bookings' }, { table: 'maintenance_faults' }, { table: 'planning_settings' },
 ]
 
 export function FleetOverview({ navigate, reportUpdatedAt }) {
@@ -72,22 +73,23 @@ function buildModel(data) {
   const forecastsByVehicle = new Map()
   data.forecasts.forEach((cycle) => {
     const current = forecastsByVehicle.get(cycle.lrv_id)
-    if (!current || Number(cycle.priority_score) > Number(current.priority_score)) forecastsByVehicle.set(cycle.lrv_id, cycle)
+    if (!current || compareMaintenancePriority(cycle, current) < 0) forecastsByVehicle.set(cycle.lrv_id, cycle)
   })
   const summaries = new Map(data.mileage.map((row) => [row.lrv_id, row]))
+  const faults = new Map((data.faults || []).map((fault) => [fault.lrv_id, fault]))
   const now = new Date()
   const activeBookings = new Map(data.bookings.filter((booking) => booking.status === 'confirmed' && new Date(booking.start_at) <= now && new Date(booking.end_at) > now).map((booking) => [booking.lrv_id, booking]))
   const openBookings = new Map(data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status)).map((booking) => [booking.lrv_id, booking]))
   const combined = data.vehicles.map((vehicle) => {
-    const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id), openBooking: openBookings.get(vehicle.lrv_id) }
+    const row = { ...vehicle, ...(summaries.get(vehicle.lrv_id) || {}), ...(forecastsByVehicle.get(vehicle.lrv_id) || {}), currentBooking: activeBookings.get(vehicle.lrv_id), openBooking: openBookings.get(vehicle.lrv_id), fault: faults.get(vehicle.lrv_id) }
     return { ...row, displayForecastDays: row.forecast_days, displayStatus: row.status === 'maintenance' || row.currentBooking ? 'maintenance' : row.status }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
   const priority = combined
     .filter((row) => row.displayStatus !== 'maintenance')
-    .map((row) => ({ ...row, priorityCategory: priorityCategory(row), reason: reasonFor(row, staleAfterHours), effectivePriority: Number(row.priority_score || 0) + (row.openBooking ? 400 : 0) }))
+    .map((row) => ({ ...row, priorityCategory: priorityCategory(row), reason: reasonFor(row, staleAfterHours) }))
     .filter((row) => row.priorityCategory)
-    .sort((a, b) => b.effectivePriority - a.effectivePriority)
+    .sort(compareMaintenancePriority)
   const attention = priority
   const dueSoon = priority.filter((row) => ['today', 'week'].includes(row.priorityCategory))
   const priorityCounts = {
