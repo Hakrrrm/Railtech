@@ -19,6 +19,22 @@ export function compareMaintenancePriority(left, right) {
   return vehicleNumber(left) - vehicleNumber(right)
 }
 
+export function maintenancePriorityCategory(item) {
+  if (isCorrective(item)) return 'fault'
+  const days = nullableNumber(item.displayForecastDays ?? item.forecast_days)
+  if (days === null) return null
+  if (days <= 0) return 'today'
+  if (days <= 7) return 'week'
+  return null
+}
+
+export function matchesMaintenancePriorityFilter(item, filter) {
+  if (filter === 'all') return true
+  const category = maintenancePriorityCategory(item)
+  if (filter === 'week') return category === 'today' || category === 'week'
+  return category === filter
+}
+
 function priorityTier(item) {
   if (!isCorrective(item) && isDueNow(item)) return 0
   if (isCorrective(item)) return 1

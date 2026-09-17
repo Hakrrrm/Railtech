@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compareMaintenancePriority } from './maintenancePriority'
+import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from './maintenancePriority'
 
 describe('maintenance priority ordering', () => {
   it('places overdue and due-today work before faults and future recalls', () => {
@@ -29,5 +29,16 @@ describe('maintenance priority ordering', () => {
       { lrv_id: 'D21', forecast_days: 3, forecast_date: '2026-09-20', km_to_next: 320 },
     ].sort(compareMaintenancePriority)
     expect(rows.map((row) => row.lrv_id)).toEqual(['D07', 'D23', 'D21', 'D22'])
+  })
+
+  it('uses the same inclusive seven-day filter across planning views', () => {
+    const today = { lrv_id: 'D12', forecast_days: 0 }
+    const upcoming = { lrv_id: 'D07', forecast_days: 2 }
+    const fault = { lrv_id: 'D29', work_type: 'corrective' }
+    expect(maintenancePriorityCategory(today)).toBe('today')
+    expect(matchesMaintenancePriorityFilter(today, 'week')).toBe(true)
+    expect(matchesMaintenancePriorityFilter(upcoming, 'week')).toBe(true)
+    expect(matchesMaintenancePriorityFilter(fault, 'week')).toBe(false)
+    expect(matchesMaintenancePriorityFilter(fault, 'fault')).toBe(true)
   })
 })

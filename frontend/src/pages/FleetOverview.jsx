@@ -4,7 +4,7 @@ import { cycleLabel, daysFromToday, formatDate, singaporeDate, vehicleLabel } fr
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
 import { Icon } from '../components/Icons'
-import { compareMaintenancePriority } from '../lib/maintenancePriority'
+import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
 
 const subscriptions = [
   { table: 'vehicles' }, { table: 'segment_traversals', event: 'INSERT' },
@@ -87,7 +87,7 @@ function buildModel(data) {
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
   const priority = combined
     .filter((row) => row.displayStatus !== 'maintenance')
-    .map((row) => ({ ...row, priorityCategory: priorityCategory(row), reason: reasonFor(row, staleAfterHours) }))
+    .map((row) => ({ ...row, priorityCategory: maintenancePriorityCategory(row), reason: reasonFor(row, staleAfterHours) }))
     .filter((row) => row.priorityCategory)
     .sort(compareMaintenancePriority)
   const attention = priority
@@ -113,20 +113,8 @@ function buildModel(data) {
   return { attention, dueSoon, priority, priorityCounts, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
 }
 
-function priorityCategory(row) {
-  if (row.status === 'faulty') return 'fault'
-  if (row.displayForecastDays === null || row.displayForecastDays === undefined) return null
-  const days = Number(row.displayForecastDays)
-  if (!Number.isFinite(days)) return null
-  if (days <= 0) return 'today'
-  if (days <= 7) return 'week'
-  return null
-}
-
 function matchesPriorityFilter(row, filter) {
-  if (filter === 'all') return true
-  if (filter === 'week') return ['today', 'week'].includes(row.priorityCategory)
-  return row.priorityCategory === filter
+  return matchesMaintenancePriorityFilter(row, filter)
 }
 
 function weekday(value) {

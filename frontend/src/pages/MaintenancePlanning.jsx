@@ -4,7 +4,7 @@ import { cycleLabel, formatDate, formatDateTime, formatDuration, formatKm, forma
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
-import { compareMaintenancePriority } from '../lib/maintenancePriority'
+import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
 
 const subscriptions = [
   { table: 'maintenance_bookings' }, { table: 'maintenance_events', event: 'INSERT' },
@@ -22,7 +22,14 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   const [toast, setToast] = useState(null)
   const [saving, setSaving] = useState(false)
   const [weekOffset, setWeekOffset] = useState(0)
+  const [priorityFilter, setPriorityFilter] = useState('all')
   const model = useMemo(() => buildMaintenanceModel(state.data, weekOffset), [state.data, weekOffset])
+  const visibleQueue = useMemo(() => model?.queue.filter((item) => matchesMaintenancePriorityFilter(item, priorityFilter)) || [], [model, priorityFilter])
+  const queueCounts = useMemo(() => ({
+    today: model?.queue.filter((item) => maintenancePriorityCategory(item) === 'today').length || 0,
+    week: model?.queue.filter((item) => matchesMaintenancePriorityFilter(item, 'week')).length || 0,
+    fault: model?.queue.filter((item) => maintenancePriorityCategory(item) === 'fault').length || 0,
+  }), [model])
   const selectedFault = state.data?.faults?.find((fault) => fault.id === form.faultId)
   const selectedRule = form.workType === 'corrective'
     ? { compatible_bay_type: selectedFault?.required_bay_type }
@@ -154,8 +161,13 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
 
-          <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap">
-            <div className="maintenance-priority-grid">{model.queue.map((item, index) => {
+          <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap" action={<select className="priority-filter" aria-label="Filter maintenance priority queue" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
+            <option value="all">All priorities ({model.queue.length})</option>
+            <option value="today">Due today ({queueCounts.today})</option>
+            <option value="week">Due within 7 days ({queueCounts.week})</option>
+            <option value="fault">Fault repair ({queueCounts.fault})</option>
+          </select>}>
+            <div className="maintenance-priority-grid">{visibleQueue.map((item, index) => {
               const decisionStatus = queueStatus(item)
               return <article className="maintenance-priority-item" key={item.fault?.id || item.lrv_id}>
                 <span className={`queue-rank ${decisionStatus === 'overdue' ? 'urgent' : ''}`}>{index + 1}</span>
@@ -163,7 +175,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
                 <button className={`priority-add ${item.booking ? 'priority-booked' : ''} ${item.work_type === 'corrective' ? 'priority-fault' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Find a collision-free slot for ${vehicleLabel(item.lrv_id)}`} title={item.booking ? 'Open existing booking' : 'Find the first compatible free slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
                 <div className="maintenance-priority-meta"><Badge value={decisionStatus}/><b>{queuePlanningDetail(item, state.data.rules)}</b></div>
               </article>
-            })}</div>
+            })}{visibleQueue.length === 0 && <div className="empty-copy">No vehicles match this priority filter.</div>}</div>
           </Card>
         </div>
 
