@@ -12,7 +12,7 @@ const subscriptions = [
   { table: 'cycle_state' }, { table: 'vehicles' }, { table: 'segment_traversals', event: 'INSERT' },
 ]
 
-const emptyForm = { workType: 'preventive', lrvId: '', primaryCycle: 2000, bundledCycles: [2000], faultId: '', durationMinutes: 120, bayId: '', date: singaporeDate(1), time: '09:00', status: 'proposed', notes: '' }
+const emptyForm = { workType: 'preventive', lrvId: '', primaryCycle: 2000, bundledCycles: [2000], faultId: '', durationMinutes: 120, bayId: '', date: singaporeDate(1), time: '09:00', status: 'confirmed', notes: '' }
 const autoScheduleStorageKey = 'railtech-auto-schedule-bookings'
 
 export function MaintenancePlanning({ reportUpdatedAt }) {
@@ -50,7 +50,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       return
     }
     setWeekOffset(Math.floor(dayOffset(draft.slot.start) / 7))
-    setForm({ ...emptyForm, ...draft.form })
+    setForm({ ...emptyForm, ...draft.form, status: 'confirmed' })
     setEditing(true)
   }
 
@@ -154,8 +154,9 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       const end = new Date(start.getTime() + durationMinutes * 60000)
       const conflict = findBookingConflict(state.data.bookings, form.bayId, form.lrvId, start, end, form.bookingId)
       if (conflict) throw new Error(conflict)
-      await scheduleMaintenance({ ...form, startAt: start.toISOString(), endAt: end.toISOString() })
-      setToast({ message: `${vehicleLabel(form.lrvId)} booking ${form.bookingId ? 'updated' : 'created'}.`, tone: 'success' }); setEditing(false); setForm(emptyForm); state.refresh(true)
+      const status = form.bookingId ? form.status : 'confirmed'
+      await scheduleMaintenance({ ...form, status, startAt: start.toISOString(), endAt: end.toISOString() })
+      setToast({ message: `${vehicleLabel(form.lrvId)} booking ${form.bookingId ? 'updated' : 'confirmed'}.`, tone: 'success' }); setEditing(false); setForm(emptyForm); await state.refresh(true)
     } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
   }
 
@@ -211,7 +212,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         </div>
 
         <div className="maintenance-planning-grid">
-          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => setEditing(true)}><Icon name="calendar"/>New booking</button></div></div>}>
+          <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => { setForm(emptyForm); setEditing(true) }}><Icon name="calendar"/>New booking</button></div></div>}>
             <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong><small>{day === singaporeDate() ? 'Today' : ''}</small></div>)}</>
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
@@ -243,7 +244,6 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
               <label>Estimated bay time (hours)<input type="number" min="0.5" step="0.5" value={Number(form.durationMinutes) / 60} onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) * 60 })}/></label>
             </> : <label>Primary cycle<select value={form.primaryCycle} onChange={(e) => { const primaryCycle = Number(e.target.value); const rule = state.data.rules.find((candidate) => Number(candidate.cycle_type) === primaryCycle); setForm({ ...form, primaryCycle, bundledCycles: rule?.included_cycles?.map(Number) || [primaryCycle], durationMinutes: Number(rule?.duration_minutes || 120) }) }}>{state.data.rules.map((rule) => <option key={rule.cycle_type} value={rule.cycle_type}>{cycleLabel(rule.cycle_type)}</option>)}</select></label>}
             <label>Depot bay<select value={form.bayId} required onChange={(e) => setForm({ ...form, bayId: e.target.value })}><option value="">Select compatible bay</option>{state.data.bays.filter((bay) => bay.active && (!selectedRule || isCompatibleBay(selectedRule, bay))).map((bay) => <option key={bay.bay_id} value={bay.bay_id}>{bay.name}</option>)}</select></label>
-            <label>Status<select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}><option value="proposed">Proposed</option><option value="confirmed">Confirmed</option></select></label>
             <label>Date<input type="date" value={form.date} min={singaporeDate()} required onChange={(e) => setForm({ ...form, date: e.target.value })}/></label>
             <label>Start time<input type="time" value={form.time} required onChange={(e) => setForm({ ...form, time: e.target.value })}/></label>
             {form.workType === 'preventive' && <fieldset className="form-span"><legend>Standard package scope</legend><div className="cycle-checks">{form.bundledCycles.map((cycle) => <label key={cycle}><input type="checkbox" checked readOnly/>{cycleLabel(cycle)}</label>)}</div><small>The technician records the cycles actually completed when closing the visit.</small></fieldset>}
@@ -292,7 +292,7 @@ function buildMaintenanceModel(data, weekOffset = 0) {
   const weekStartOffset = weekOffset * 7
   return {
     queue, overdue: allPriorities.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,
-    dueSoon: allPriorities.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
+    dueSoon: queue.filter((row) => row.status !== 'faulty' && row.forecast_days !== null && Number(row.forecast_days) >= 0 && Number(row.forecast_days) <= 7).length,
     confirmed: data.bookings.filter((row) => row.status === 'confirmed' && dayOffset(row.start_at) >= weekStartOffset && dayOffset(row.start_at) < weekStartOffset + 7).length,
     days: Array.from({ length: 7 }, (_, index) => singaporeDate(weekStartOffset + index)),
   }
