@@ -161,7 +161,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
 
-          <Card title="Maintenance priority queue" className="maintenance-priority-card-wrap" action={<select className="priority-filter" aria-label="Filter maintenance priority queue" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
+          <Card title="Priority LRVs" className="maintenance-priority-card-wrap" action={<select className="priority-filter" aria-label="Filter maintenance priority queue" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
             <option value="all">All priorities ({model.queue.length})</option>
             <option value="today">Due today ({queueCounts.today})</option>
             <option value="week">Due within 7 days ({queueCounts.week})</option>
