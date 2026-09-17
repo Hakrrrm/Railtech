@@ -213,7 +213,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
 
         <div className="maintenance-planning-grid">
           <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => { setForm(emptyForm); setEditing(true) }}><Icon name="calendar"/>New booking</button></div></div>}>
-            <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><strong>{formatDate(day)}</strong>{day === singaporeDate() && <span className="schedule-today-badge">Today</span>}</div>)}</>
+            <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><span className="schedule-weekday">{weekdayLabel(day)}</span><strong>{formatDate(day)}</strong>{day === singaporeDate() && <span className="schedule-today-badge">Today</span>}</div>)}</>
               {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
           </Card>
 
@@ -307,10 +307,14 @@ function calendarWeekOffset(value) {
   return Math.floor((dayOffset(value) - singaporeWeekStartOffset()) / 7)
 }
 
+function weekdayLabel(value) {
+  return new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', weekday: 'long' }).format(new Date(`${value}T00:00:00+08:00`))
+}
+
 function ScheduleRow({ bay, days, bookings, onEdit }) {
   const layout = layoutScheduleBookings(bookings, bay.bay_id, days)
   const lanes = Math.max(1, ...layout.map((item) => item.lane + 1))
-  const rowHeight = Math.max(205, lanes * 82 + 16)
+  const rowHeight = Math.max(235, lanes * 82 + 16)
   return <><div className="schedule-label" style={{ height: rowHeight }}><strong>{bay.name}</strong><small>{bay.opens_at.slice(0, 5)}–{bay.closes_at.slice(0, 5)}</small></div><div className="schedule-track" style={{ height: rowHeight }}>
     {layout.map(({ booking, startDay, endDay, lane, continuesBefore, continuesAfter }) => {
       const left = (startDay / days.length) * 100
