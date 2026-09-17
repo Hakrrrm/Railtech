@@ -6,7 +6,7 @@ import { Toast } from './UI'
 
 const navItems = [
   ['fleet', 'grid', 'Fleet Overview'], ['maintenance', 'wrench', 'Maintenance Planning'],
-  ['deployment', 'pin', 'Fleet Deployment'], ['evidence', 'evidence', 'Evidence'],
+  ['deployment', 'pin', 'Fleet Deployment'], ['evidence', 'evidence', 'LRV Database'],
 ]
 
 export function Layout({ route, navigate, children, updatedAt }) {

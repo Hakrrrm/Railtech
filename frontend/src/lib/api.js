@@ -68,14 +68,11 @@ export async function loadDeploymentPlanning() {
 
 export async function loadEvidence() {
   const db = client()
-  const [anchors, events, changes, rules, observations] = await Promise.all([
-    result(db.from('mileage_anchors').select('*').order('ts', { ascending: false }).limit(120), 'Mileage evidence'),
-    result(db.from('maintenance_events').select('*').order('completed_at', { ascending: false }).limit(120), 'Maintenance evidence'),
-    result(db.from('stock_changes').select('*').order('created_at', { ascending: false }).limit(120), 'Deployment evidence'),
-    result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
-    result(db.from('technician_observations').select('*').order('captured_at', { ascending: false }).limit(120), 'Technician observations'),
+  const [vehicles, events] = await Promise.all([
+    result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'LRV database'),
+    result(db.from('maintenance_events').select('*').order('completed_at', { ascending: false }), 'Maintenance history'),
   ])
-  return { anchors, events, changes, rules, observations }
+  return { vehicles, events }
 }
 
 export async function loadSettings() {
