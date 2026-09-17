@@ -329,8 +329,8 @@ begin
     raise exception 'Expected two active SPLRT depot bays';
   end if;
 
-  if (select count(*) from maintenance_bookings where demo_key like 'demo:%') <> 6 then
-    raise exception 'Expected six demo maintenance bookings';
+  if (select count(*) from maintenance_bookings where demo_key like 'demo:%') <> 11 then
+    raise exception 'Expected eleven demo maintenance bookings';
   end if;
 
   if (select count(*) from maintenance_faults where demo_key like 'demo:%' and status = 'open') <> 2
@@ -361,9 +361,16 @@ begin
     where lrv_id = 'D07'
       and primary_cycle = 13000
       and bundled_cycles @> array[2000,13000]
-      and status = 'proposed'
+      and status = 'confirmed'
   ) then
     raise exception 'D07 bundled booking scenario is missing';
+  end if;
+
+  if (select count(*) from maintenance_bookings
+      where demo_key like 'demo:booking:history:%'
+        and status = 'completed'
+        and start_at < date_trunc('day', now() at time zone 'Asia/Singapore') at time zone 'Asia/Singapore') <> 5 then
+    raise exception 'Expected five completed historical bookings before the demo date';
   end if;
 
   if not exists (
@@ -660,8 +667,8 @@ begin
     select 1 from maintenance_bookings
     where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
       and (demo_key is null or demo_key not like 'demo:%')
-  ) or (select count(*) from maintenance_bookings where demo_key like 'demo:booking:%') <> 6 then
-    raise exception 'Demo reset did not restore the six seeded bookings';
+  ) or (select count(*) from maintenance_bookings where demo_key like 'demo:booking:%') <> 11 then
+    raise exception 'Demo reset did not restore the eleven seeded bookings';
   end if;
   if (select count(*) from maintenance_faults where demo_key like 'demo:fault:%' and status = 'open') <> 2 then
     raise exception 'Demo reset did not reopen the two seeded faults';
