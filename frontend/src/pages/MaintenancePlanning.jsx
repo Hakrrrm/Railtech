@@ -258,7 +258,6 @@ function ScheduleRow({ bay, days, bookings, onEdit }) {
       return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 4px)`, width: `calc(${width}% - 8px)`, top: 8 + lane * 82 }}>
         <button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}>
           <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {bookingWorkLabel(booking)}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
-          <Badge value={booking.status}/>
         </button>
       </div>
     })}

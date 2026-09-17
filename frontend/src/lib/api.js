@@ -1,5 +1,4 @@
 import { supabase, supabaseConfigError } from '../supabaseClient'
-import { singaporeDate } from './format'
 
 function client() {
   if (!supabase) throw new Error(supabaseConfigError)
@@ -88,9 +87,8 @@ export async function loadSettings() {
 
 export async function loadTechnicianWork() {
   const db = client()
-  const today = new Date(`${singaporeDate()}T00:00:00+08:00`)
   const [bookings, mileage, forecasts, faults] = await Promise.all([
-    result(db.from('maintenance_bookings').select('*').eq('status', 'confirmed').gte('end_at', today.toISOString()).order('start_at'), 'Expected maintenance arrivals'),
+    result(db.from('maintenance_bookings').select('*').in('status', ['proposed', 'confirmed']).order('start_at'), 'Expected maintenance arrivals'),
     result(db.from('vehicle_mileage_summary').select('*').order('lrv_id'), 'Vehicle mileage'),
     result(db.from('cycle_forecasts').select('*').order('priority_score', { ascending: false }), 'Maintenance forecasts'),
     result(db.from('maintenance_faults').select('*').in('status', ['open', 'scheduled']).order('reported_at'), 'Maintenance faults'),
@@ -131,6 +129,8 @@ export async function submitHubometerReading(input) {
     p_ocr_confidence: Number(input.confidence),
     p_reviewed_manually: Boolean(input.reviewedManually),
     p_booking_id: input.bookingId || null,
+    p_completed_cycles: (input.completedCycles || []).map(Number),
+    p_completion_notes: input.completionNotes?.trim() || null,
   })
   if (error) {
     await db.storage.from('hubometer-evidence').remove([path])

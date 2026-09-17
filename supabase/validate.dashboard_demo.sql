@@ -621,7 +621,8 @@ begin
     'VALIDATION', 'hubometer-evidence/D06/validation.jpg',
     (select lifetime_planning_mileage_km from vehicle_mileage_summary where lrv_id = 'D06'),
     0.94, false,
-    (select id from maintenance_bookings where demo_key = 'validation:technician-completion')
+    (select id from maintenance_bookings where demo_key = 'validation:technician-completion'),
+    array[2000,13000], null
   );
   if not exists (
     select 1
