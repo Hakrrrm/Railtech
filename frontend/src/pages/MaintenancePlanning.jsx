@@ -201,7 +201,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
     } catch (error) { setToast({ message: error.message, tone: 'danger' }) } finally { setSaving(false) }
   }
 
-  return <>
+  return <div className="maintenance-page">
     <PageHeader title="Maintenance planning"/>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
@@ -263,7 +263,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
       </>}
     </DataBoundary>
     <Toast message={toast?.message} tone={toast?.tone} onClose={() => setToast(null)}/>
-  </>
+  </div>
 }
 
 function buildMaintenanceModel(data, weekOffset = 0) {
