@@ -691,6 +691,49 @@ begin
   ) then
     raise exception 'Demo reset did not restore the seeded cycle state';
   end if;
+
+  if (
+    with ranked as (
+      select forecast.*, vehicle.status,
+        row_number() over (
+          partition by forecast.lrv_id
+          order by forecast.priority_score desc, forecast.cycle_type
+        ) as forecast_rank
+      from cycle_forecasts as forecast
+      join vehicles as vehicle using (lrv_id)
+      where vehicle.fleet = 'splrt'
+        and vehicle.lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+    )
+    select count(*)
+    from ranked
+    where forecast_rank = 1
+      and status <> 'maintenance'
+      and (status = 'faulty' or forecast_days between 0 and 7)
+  ) <> 7 then
+    raise exception 'Demo reset must restore seven vehicles requiring maintenance attention';
+  end if;
+
+  if (
+    with ranked as (
+      select forecast.*, vehicle.status,
+        row_number() over (
+          partition by forecast.lrv_id
+          order by forecast.priority_score desc, forecast.cycle_type
+        ) as forecast_rank
+      from cycle_forecasts as forecast
+      join vehicles as vehicle using (lrv_id)
+      where vehicle.fleet = 'splrt'
+        and vehicle.lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+    )
+    select count(*)
+    from ranked
+    where forecast_rank = 1
+      and status <> 'maintenance'
+      and status <> 'faulty'
+      and forecast_days between 0 and 7
+  ) <> 5 then
+    raise exception 'Demo reset must restore five vehicles due within seven days';
+  end if;
 end
 $validation$;
 

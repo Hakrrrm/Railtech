@@ -2067,6 +2067,9 @@ $$;
 create or replace function reset_dashboard_demo()
 returns void language plpgsql security definer set search_path = public
 as $$
+declare
+  v_latest_demo_telemetry timestamptz;
+  v_telemetry_shift interval;
 begin
   delete from technician_observations
   where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$';
@@ -2074,6 +2077,25 @@ begin
   where source = 'technician_ocr'
     and lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$';
   perform reset_dashboard_demo_core();
+
+  select max(ts)
+  into v_latest_demo_telemetry
+  from segment_traversals
+  where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+    and seq >= 900000000
+    and seq < 950000000
+    and seg_id like 'SIM\_%' escape '\';
+
+  if v_latest_demo_telemetry is not null then
+    v_telemetry_shift := now() - interval '5 minutes' - v_latest_demo_telemetry;
+
+    update segment_traversals
+    set ts = ts + v_telemetry_shift
+    where lrv_id ~ '^D(0[1-9]|[12][0-9]|30)$'
+      and seq >= 900000000
+      and seq < 950000000
+      and seg_id like 'SIM\_%' escape '\';
+  end if;
 end;
 $$;
 
