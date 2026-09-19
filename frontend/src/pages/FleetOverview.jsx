@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import { loadFleetOverview } from '../lib/api'
-import { cycleLabel, daysFromToday, formatDate, singaporeDate, vehicleLabel } from '../lib/format'
+import { cycleLabel, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader } from '../components/UI'
+import { MaintenanceOutlook } from '../components/MaintenanceOutlook'
 import { Icon } from '../components/Icons'
 import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
 
@@ -30,14 +31,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
         </div>
 
         <Card title="14-day maintenance outlook">
-          <div className="outlook-chart">
-            <div className="outlook-axis-label">Maintenance blocks scheduled</div>
-            <div className="outlook-scale" aria-label={`Scale from zero to ${model.outlookScaleMax}`}>{Array.from({ length: model.outlookScaleMax + 1 }, (_, index) => <span key={index}>{model.outlookScaleMax - index}</span>)}</div>
-            <div className="outlook" style={{ '--outlook-grid-step': `${100 / model.outlookScaleMax}%` }}>{model.outlook.map((day) => <div className="outlook-day" key={day.date} title={`${day.count} maintenance cycle${day.count === 1 ? '' : 's'}`}>
-              <div className="bar-area"><span style={{ height: `${day.count / model.outlookScaleMax * 100}%` }} className={day.count ? 'bar-active' : ''}/></div>
-              <small><span>{formatDate(day.date)}</span><span>{weekday(day.date)}</span></small>
-            </div>)}</div>
-          </div>
+          <MaintenanceOutlook bookings={state.data.bookings}/>
         </Card>
 
         <div className="overview-grid">
@@ -105,20 +99,11 @@ function buildModel(data) {
       : leading.openBooking
         ? { title: `Review the booked slot for ${vehicleLabel(leading.lrv_id)}`, description: leading.reason, reason: 'This vehicle already has an unresolved depot booking, so another reservation would duplicate the visit.', button: 'Open maintenance plan', destination: 'maintenance' }
     : { title: `Reserve a depot slot for ${leading.lrv_id ? vehicleLabel(leading.lrv_id) : 'the next recall'}`, description: leading.reason || 'Review the upcoming maintenance forecast.', reason: 'Booking against forecast days gives planners time to bundle work and protect fleet availability.', button: 'Open maintenance plan', destination: 'maintenance' }
-  const outlook = Array.from({ length: 14 }, (_, offset) => {
-    const iso = singaporeDate(offset)
-    return { date: iso, count: data.forecasts.filter((cycle) => cycle.forecast_date && daysFromToday(cycle.forecast_date) === offset).length }
-  })
-  const outlookScaleMax = Math.max(3, ...outlook.map((day) => day.count))
-  return { attention, dueSoon, priority, priorityCounts, next, outlook, outlookScaleMax, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
+  return { attention, dueSoon, priority, priorityCounts, next, spares: combined.filter((row) => row.status === 'idle' && !row.openBooking).length }
 }
 
 function matchesPriorityFilter(row, filter) {
   return matchesMaintenancePriorityFilter(row, filter)
-}
-
-function weekday(value) {
-  return new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', weekday: 'short' }).format(new Date(`${value}T00:00:00+08:00`))
 }
 
 function priorityForecastLabel(days) {
