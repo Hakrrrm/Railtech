@@ -37,11 +37,13 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
         <Card title="Maintenance cycles" eyebrow="Nested preventive-maintenance exposure">
           <div className="cycle-grid">{data.forecasts.map((cycle) => {
             const progress = Number(cycle.km_since) / Number(cycle.cycle_type) * 100
-            const danger = Number(cycle.km_to_next) <= 0 || Number(cycle.forecast_days) <= 2
+            const hasForecast = cycle.forecast_days !== null && cycle.forecast_days !== undefined
+            const overdue = cycle.km_to_next !== null && Number(cycle.km_to_next) <= 0
+            const danger = overdue || (hasForecast && Number(cycle.forecast_days) <= 2)
             return <div className={`cycle-card ${danger ? 'cycle-danger' : ''}`} key={cycle.cycle_type}>
-              <div><strong>{cycleLabel(cycle.cycle_type)}</strong><Badge value={Number(cycle.km_to_next) <= 0 ? 'Overdue' : forecastLabel(cycle.forecast_days)} tone={danger ? 'danger' : 'info'}/></div>
+              <div><strong>{cycleLabel(cycle.cycle_type)}</strong>{(overdue || hasForecast) && <Badge value={overdue ? 'Overdue' : forecastLabel(cycle.forecast_days)} tone={danger ? 'danger' : 'info'}/>}</div>
               <Progress value={progress} tone={danger ? 'red' : 'teal'}/>
-              <p><b>{formatKm(cycle.km_to_next)}</b> remaining</p><small>{forecastLabel(cycle.forecast_days)} at fleet average {formatKm(cycle.rolling_daily_rate_km, 0)}/day</small>
+              <p><b>{formatKm(cycle.km_to_next)}</b> remaining</p>{hasForecast && <small>{forecastLabel(cycle.forecast_days)} at fleet average {formatKm(cycle.rolling_daily_rate_km, 0)}/day</small>}
             </div>
           })}</div>
         </Card>
