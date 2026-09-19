@@ -89,9 +89,9 @@ describe('maintenance assistant action boundary', () => {
   })
   it('keeps validated preferences beyond the conversational history window', async () => {
     const preferences = { ...constraints, excludeVehicleIds: ['V29'], bayIds: ['BAY-1'] }
-    const args = setup([call('get_fleet_status'), reply('I will retain the selected bay and excluded LRV.')], { planningPreferences: preferences })
+    const args = setup([call('resolve_followup', { intent: 'other' }), call('get_fleet_status'), reply('I will retain the selected bay and excluded LRV.')], { planningPreferences: preferences })
     const result = await runAssistantTurn({ ...args, message: 'What are we planning?' })
-    expect(args.provider.mock.calls[0][0].input.some(m => m.role === 'developer' && m.content.includes('"excludeVehicleIds":["V29"]'))).toBe(true)
+    expect(args.provider.mock.calls[1][0].input.some(m => m.role === 'developer' && m.content.includes('"excludeVehicleIds":["V29"]'))).toBe(true)
     expect(result.planningPreferences).toEqual(preferences)
   })
   it('creates only validated blue bookings and returns server-confirmed narration', async () => {
@@ -166,7 +166,7 @@ describe('reschedule orchestration', () => {
     expect(result.text.split(/\s+/).length).toBeLessThan(35)
   })
   it('previews moves without writing or repetitive model narration', async () => {
-    const args = setup([call('get_fleet_status'), call('preview_reschedule', move), reply('V12 can move to Bay 2 on 21 September, 06:00–08:00.')], { loadData: vi.fn().mockResolvedValue(booked()) })
+    const args = setup([call('get_fleet_status'), call('preview_reschedule', move), reply('V12 can move to Bay 2 on 21 September, 06:00â€“08:00.')], { loadData: vi.fn().mockResolvedValue(booked()) })
     const result = await runAssistantTurn({ ...args, message: 'Preview moving V12 to bay 2' })
     expect(result.plan.kind).toBe('reschedule')
     expect(args.saveProposal).not.toHaveBeenCalled()

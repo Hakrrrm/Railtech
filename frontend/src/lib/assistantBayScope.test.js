@@ -36,18 +36,27 @@ describe('source bay accuracy', () => {
 it('blocks model-selected Bay 1 vehicles in a Bay 2 follow-up before saving', async () => {
   const fleet = { ...data, vehicles: ['D12','D30'].map(lrv_id => ({ lrv_id, status: 'in_service', fleet: 'splrt' })), forecasts: [], rules: [], faults: [], duties: [], settings: {} }
   const call = (name, args = {}) => ({ output: [{ type: 'function_call', name, arguments: JSON.stringify(args), call_id: name }] })
-  const provider = vi.fn().mockResolvedValueOnce(call('get_fleet_status')).mockResolvedValueOnce(call('propose_reschedule', { vehicleIds: ['V12', 'V30'], bayIds: ['SPLRT-BAY-1'], startDate: null, endDate: null, startTime: null }))
+  const provider = vi.fn().mockResolvedValueOnce(call('resolve_followup', { intent: 'other' })).mockResolvedValueOnce(call('get_fleet_status')).mockResolvedValueOnce(call('propose_reschedule', { vehicleIds: ['V12', 'V30'], bayIds: ['SPLRT-BAY-1'], startDate: null, endDate: null, startTime: null }))
   const saveProposal = vi.fn()
   const result = await runAssistantTurn({ message: 'Reschedule those later tomorrow', loadData: async () => fleet, provider, saveProposal, now, planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
   expect(result.text).toContain('not all booked in the source bay')
   expect(saveProposal).not.toHaveBeenCalled()
 })
 
-it('continues yeah do that and saves the reviewed move through saveProposal', async () => {
+it.each(['yeah do that', 'sure do that', 'sounds good, go for it', 'please proceed with your suggestion'])('accepts contextual assent: %s', async message => {
   const saveProposal = vi.fn().mockResolvedValue({ id: 'persisted-batch', status: 'proposed' })
-  const result = await runAssistantTurn({ message: 'yeah do that', loadData: async () => data, provider: vi.fn(), saveProposal, now,
+  const result = await runAssistantTurn({ message, loadData: async () => data, provider: vi.fn().mockResolvedValue({ output: [{ type: 'function_call', name: 'resolve_followup', arguments: JSON.stringify({ intent: 'accept_proposal' }) }] }), saveProposal, now,
     history: [{ role: 'assistant', content: '1 move is feasible. Say schedule it to prepare the moves for confirmation.' }], planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
   expect(saveProposal).toHaveBeenCalledOnce()
   expect(result.batch.id).toBe('persisted-batch')
   expect(result.plan.bookings[0]).toMatchObject({ bookingId: 'b', bayId: 'SPLRT-BAY-1' })
+})
+
+it('keeps a preview acceptance read-only', async () => {
+  const saveProposal = vi.fn()
+  const result = await runAssistantTurn({ message: 'sounds good', loadData: async () => data, saveProposal, now,
+    provider: vi.fn().mockResolvedValue({ output: [{ type: 'function_call', name: 'resolve_followup', arguments: '{"intent":"accept_preview"}' }] }),
+    history: [{ role: 'assistant', content: 'Would you like me to explore alternative slots?' }], planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
+  expect(result.plan.bookings).toHaveLength(1)
+  expect(saveProposal).not.toHaveBeenCalled()
 })
