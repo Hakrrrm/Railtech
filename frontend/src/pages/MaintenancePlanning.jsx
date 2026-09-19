@@ -6,6 +6,7 @@ import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../com
 import { Icon } from '../components/Icons'
 import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
 import { findAvailableSlot, isCompatibleBay } from '../lib/maintenanceScheduling'
+import { MaintenanceAssistant } from '../components/MaintenanceAssistant'
 
 const subscriptions = [
   { table: 'maintenance_bookings' }, { table: 'maintenance_events', event: 'INSERT' },
@@ -26,6 +27,8 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   const [weekOffset, setWeekOffset] = useState(0)
   const [priorityFilter, setPriorityFilter] = useState('all')
   const [autoScheduledIds, setAutoScheduledIds] = useState(readAutoScheduledIds)
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [assistantPending, setAssistantPending] = useState(0)
   const model = useMemo(() => buildMaintenanceModel(state.data, weekOffset), [state.data, weekOffset])
   const pendingAutoBookings = useMemo(() => (state.data?.bookings || []).filter((booking) => autoScheduledIds.includes(booking.id) && booking.status === 'proposed'), [state.data, autoScheduledIds])
   const visibleQueue = useMemo(() => model?.queue.filter((item) => matchesMaintenancePriorityFilter(item, priorityFilter)) || [], [model, priorityFilter])
@@ -203,7 +206,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   }
 
   return <div className="maintenance-page">
-    <PageHeader title="Maintenance planning"/>
+    <PageHeader title="Maintenance planning" actions={<button className="button button-secondary" onClick={() => setAssistantOpen(true)} aria-haspopup="dialog"><Icon name="calendar"/>Plan with AI{assistantPending > 0 && <span className="assistant-launch-count">{assistantPending} to confirm</span>}</button>}/>
     <DataBoundary loading={state.loading} error={state.error} empty={!state.data?.vehicles?.length} onRetry={state.refresh}>
       {model && <>
         <div className="metric-grid metric-grid-three">
@@ -263,6 +266,13 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
           </form></div></div>}
       </>}
     </DataBoundary>
+    <MaintenanceAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} onChanged={() => state.refresh(true)} onNotice={(message, tone) => setToast({ message, tone })} onProposal={(batch, plan, navigate) => {
+      setAssistantPending(batch?.booking_ids?.length || 0)
+      if (batch && navigate && plan?.bookings?.length) {
+        const starts = plan.bookings.map((booking) => booking.startAt || booking.start_at).filter(Boolean).sort()
+        if (starts.length) setWeekOffset(calendarWeekOffset(starts[0]))
+      }
+    }}/>
     <Toast message={toast?.message} tone={toast?.tone} onClose={() => setToast(null)}/>
   </div>
 }

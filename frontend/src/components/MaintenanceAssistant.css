@@ -1,0 +1,49 @@
+.maintenance-assistant-backdrop { position: fixed; inset: 0; z-index: 150; background: #0b193552; display: flex; justify-content: flex-end; }
+.maintenance-assistant { width: min(560px, 100%); height: 100dvh; background: #f5f8fb; color: #12263f; box-shadow: -12px 0 42px #0a1c3326; display: flex; flex-direction: column; min-height: 0; }
+.maintenance-assistant-header { padding: 22px 24px 18px; background: #0b1a31; color: white; display: flex; gap: 16px; align-items: flex-start; flex-shrink: 0; }
+.maintenance-assistant-header h2 { margin: 7px 0; font-size: 21px; line-height: 1.2; }
+.maintenance-assistant-header p { margin: 0; font-size: 13px; color: #c0d1df; }
+.maintenance-assistant-header .icon-button { margin-left: auto; background: #ffffff13; color: white; border-color: #ffffff30; font-size: 24px; flex-shrink: 0; }
+.maintenance-assistant-eyebrow { color: #7fd3d8; font-size: 10px; letter-spacing: .12em; font-weight: 800; }
+.maintenance-assistant-toolbar { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 11px 20px; border-bottom: 1px solid #dce6f0; background: white; font-size: 11px; color: #61758b; flex-shrink: 0; }
+.maintenance-assistant-toolbar button { border: 0; background: transparent; color: #087e82; font-size: 12px; font-weight: 700; cursor: pointer; padding: 5px; }
+.maintenance-assistant button:disabled { opacity: .5; cursor: not-allowed; }
+.maintenance-assistant-conversation { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 20px; }
+.maintenance-assistant-welcome { padding: 12px 4px 20px; }
+.maintenance-assistant-welcome > svg { color: #078a8f; }
+.maintenance-assistant-welcome h3 { margin: 14px 0 9px; font-size: 19px; }
+.maintenance-assistant-welcome p { font-size: 14px; line-height: 1.55; color: #566d84; }
+.maintenance-assistant-starters { display: grid; gap: 10px; margin-top: 22px; }
+.maintenance-assistant-starters button { text-align: left; border: 1px solid #d4e2ee; border-radius: 10px; background: white; padding: 13px 14px; color: #203d59; font-size: 13px; display: flex; justify-content: space-between; gap: 12px; cursor: pointer; }
+.maintenance-assistant-starters svg { flex-shrink: 0; }
+.maintenance-assistant-message { border: 1px solid #dfE8f0; background: white; border-radius: 12px; margin: 0 20px 16px 0; padding: 13px 15px; overflow-wrap: anywhere; }
+.maintenance-assistant-message strong { font-size: 11px; color: #647e94; }
+.maintenance-assistant-message p { font-size: 14px; line-height: 1.55; margin: 6px 0 0; white-space: pre-wrap; }
+.maintenance-assistant-message-user { background: #e3f4f1; border-color: #c3e5df; margin-right: 0; margin-left: 32px; }
+.maintenance-assistant-working { color: #55728a; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.maintenance-assistant-working span { width: 8px; height: 8px; background: #078a8f; border-radius: 50%; animation: assistant-pulse 1.2s ease-in-out infinite; }
+.maintenance-assistant-plan { border: 1px solid #b8d7ed; border-radius: 12px; padding: 15px; background: #f0f9ff; margin-top: 16px; }
+.maintenance-assistant-plan h3 { font-size: 15px; margin: 0; }
+.maintenance-assistant-plan > p { font-size: 12px; color: #5f768a; margin: 6px 0 12px; }
+.maintenance-assistant-plan-booking { display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; border-top: 1px solid #d7e8f3; padding: 11px 0; font-size: 12px; }
+.maintenance-assistant-plan-booking small { grid-column: 1 / -1; color: #57728b; }
+.maintenance-assistant-plan-notes { border-top: 1px solid #d7e8f3; padding-top: 10px; font-size: 12px; line-height: 1.45; }
+.maintenance-assistant-plan-notes p { margin: 6px 0; }
+.maintenance-assistant-confirm { padding: 13px 20px; border-top: 1px solid #b9dae5; background: #effaff; flex-shrink: 0; }
+.maintenance-assistant-confirm p { display: grid; gap: 3px; margin: 0 0 11px; font-size: 13px; }
+.maintenance-assistant-confirm p span, .maintenance-assistant-confirm p small { font-size: 11px; color: #61768b; }
+.maintenance-assistant-confirm > div { display: flex; gap: 8px; }
+.maintenance-assistant-confirm .button { flex: 1; font-size: 12px; padding: 11px 10px; min-height: 40px; justify-content: center; }
+.maintenance-assistant-error { padding: 10px 20px; background: #fff3f2; color: #9e2834; font-size: 12px; border-top: 1px solid #edc3c5; flex-shrink: 0; max-height: 130px; overflow: auto; }
+.maintenance-assistant-error p { margin: 0 0 6px; }
+.maintenance-assistant-error button { border: 0; color: #9e2834; background: transparent; text-decoration: underline; cursor: pointer; padding: 0; }
+.maintenance-assistant-compose { background: white; border-top: 1px solid #dce6ef; padding: 14px 20px max(16px, env(safe-area-inset-bottom)); flex-shrink: 0; }
+.maintenance-assistant-compose label { display: block; color: #4c647b; font-size: 11px; margin-bottom: 7px; font-weight: 700; }
+.maintenance-assistant-compose > div { display: flex; gap: 8px; align-items: stretch; }
+.maintenance-assistant-compose textarea { resize: none; min-height: 62px; min-width: 0; width: 100%; border: 1px solid #cbdce9; border-radius: 8px; padding: 10px; font: inherit; font-size: 13px; line-height: 1.4; color: #19334c; }
+.maintenance-assistant-compose .button { padding: 10px 13px; }
+.maintenance-assistant-compose small { display: block; font-size: 10px; color: #73879a; margin-top: 9px; line-height: 1.4; }
+.assistant-launch-count { border-radius: 10px; padding: 1px 6px; background: #d9f0fc; color: #007aab; font-size: 11px; }
+@keyframes assistant-pulse { 50% { opacity: .25; } }
+@media (max-height: 650px) { .maintenance-assistant-header { padding: 12px 18px; } .maintenance-assistant-header p { display: none; } .maintenance-assistant-header h2 { font-size: 18px; } .maintenance-assistant-confirm { padding: 9px 16px; } .maintenance-assistant-compose { padding: 10px 16px; } }
+@media (prefers-reduced-motion: reduce) { .maintenance-assistant-working span { animation: none; } }

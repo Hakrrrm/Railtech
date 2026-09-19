@@ -1,0 +1,3 @@
+[functions.maintenance-assistant]
+# The handler verifies operator JWTs/capabilities itself. Supports publishable keys.
+verify_jwt = false
