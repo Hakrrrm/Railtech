@@ -5,6 +5,7 @@ import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../components/UI'
 import { Icon } from '../components/Icons'
 import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
+import { findAvailableSlot, isCompatibleBay } from '../lib/maintenanceScheduling'
 
 const subscriptions = [
   { table: 'maintenance_bookings' }, { table: 'maintenance_events', event: 'INSERT' },
@@ -314,12 +315,13 @@ function weekdayLabel(value) {
 function ScheduleRow({ bay, days, bookings, onEdit }) {
   const layout = layoutScheduleBookings(bookings, bay.bay_id, days)
   const lanes = Math.max(1, ...layout.map((item) => item.lane + 1))
-  const rowHeight = Math.max(235, lanes * 82 + 16)
+  const lanePitch = Math.min(50, Math.max(30, Math.floor(250 / lanes)))
+  const rowHeight = Math.max(120, lanes * lanePitch + 8)
   return <><div className="schedule-label" style={{ height: rowHeight }}><strong>{bay.name}</strong><small>{bay.opens_at.slice(0, 5)}–{bay.closes_at.slice(0, 5)}</small></div><div className="schedule-track" style={{ height: rowHeight }}>
     {layout.map(({ booking, startDay, endDay, lane, continuesBefore, continuesAfter }) => {
       const left = (startDay / days.length) * 100
       const width = ((endDay - startDay) / days.length) * 100
-      return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 4px)`, width: `calc(${width}% - 8px)`, top: 8 + lane * 82 }}>
+      return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 4px)`, width: `calc(${width}% - 8px)`, top: 4 + lane * lanePitch, height: lanePitch - 6 }}>
         <button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}>
           <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {bookingWorkLabel(booking)}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
         </button>
@@ -405,7 +407,7 @@ function buildSuggestedBooking(item, data, bookings) {
         workType: 'corrective', lrvId: item.lrv_id, primaryCycle: null, bundledCycles: [], faultId: fault.id,
         durationMinutes: Number(fault.estimated_duration_minutes), bayId: slot.bay.bay_id,
         date: singaporeDateFrom(slot.start), time: formatTime(slot.start), status: 'proposed',
-        notes: `${fault.fault_code}: ${fault.description} · earliest compatible free slot selected automatically`,
+        notes: `${fault.fault_code}: ${fault.description} · balanced compatible slot selected automatically`,
       },
     }
   }
@@ -429,52 +431,10 @@ function buildSuggestedBooking(item, data, bookings) {
       durationMinutes: Number(rule?.duration_minutes || 120), bayId: slot.bay.bay_id,
       date: singaporeDateFrom(slot.start), time: formatTime(slot.start), status: 'proposed',
       notes: cycles.length > 1
-        ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · earliest compatible slot on or after the forecast due date`
-        : `${cycleLabel(primaryCycle)} recall · earliest compatible slot on or after the forecast due date`,
+        ? `${cycleLabel(primaryCycle)} package includes ${cycles.map(cycleLabel).join(', ')} · balanced slot on or soon after the forecast due date`
+        : `${cycleLabel(primaryCycle)} recall · balanced slot on or soon after the forecast due date`,
     },
   }
-}
-
-function findAvailableSlot(rule, bays, bookings, duties, lrvId, preferredOffset) {
-  if (!rule) return null
-  const durationMs = Number(rule.duration_minutes || 90) * 60000
-  const eligibleBays = bays.filter((bay) => bay.active && isCompatibleBay(rule, bay))
-  const occupied = bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status))
-  const now = new Date()
-  for (let offset = preferredOffset; offset <= preferredOffset + 42; offset += 1) {
-    const date = singaporeDate(offset)
-    for (const bay of eligibleBays) {
-      const openMinutes = timeToMinutes(bay.opens_at)
-      const closeMinutes = timeToMinutes(bay.closes_at)
-      for (let minute = openMinutes; minute <= closeMinutes; minute += 30) {
-        const start = new Date(`${date}T${minutesToTime(minute)}:00+08:00`)
-        const end = new Date(start.getTime() + durationMs)
-        const endTime = Number(formatTime(end).replace(':', ''))
-        const openTime = Number(bay.opens_at.slice(0, 5).replace(':', ''))
-        const closeTime = Number(bay.closes_at.slice(0, 5).replace(':', ''))
-        if (start < now || endTime < openTime || endTime > closeTime) continue
-        const bayOverlap = occupied.some((booking) => booking.bay_id === bay.bay_id && new Date(booking.start_at) < end && new Date(booking.end_at) > start)
-        const vehicleOverlap = occupied.some((booking) => booking.lrv_id === lrvId && new Date(booking.start_at) < end && new Date(booking.end_at) > start)
-        const dutyOverlap = (duties || []).some((duty) => duty.lrv_id === lrvId && new Date(duty.duty_start) < end && new Date(duty.duty_end) > start)
-        if (!bayOverlap && !vehicleOverlap && !dutyOverlap) return { bay, start, end }
-      }
-    }
-  }
-  return null
-}
-
-function isCompatibleBay(rule, bay) {
-  if (rule.compatible_bay_type === 'heavy') return ['heavy', 'universal'].includes(bay.bay_type)
-  return ['routine', 'universal', 'heavy'].includes(bay.bay_type)
-}
-
-function timeToMinutes(value) {
-  const [hours, minutes] = String(value).split(':').map(Number)
-  return hours * 60 + minutes
-}
-
-function minutesToTime(value) {
-  return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
 }
 
 function singaporeDateFrom(value) {
