@@ -115,6 +115,9 @@ Deno.serve(async request => {
 })
 
 async function operatorIdentity(request: Request) {
+  // This explicitly enabled demo grants every dashboard visitor planning access.
+  // Production still uses authenticated operator roles when demo is disabled.
+  if (Deno.env.get('MAINTENANCE_ASSISTANT_ALLOW_DEMO') === 'true') return { id: null, demo: true }
   const token = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
   if (token?.startsWith('eyJ')) {
     const { data } = await db.auth.getUser(token)

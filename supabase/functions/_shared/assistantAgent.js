@@ -1,4 +1,4 @@
-import { bayClearanceReply, validateSourceBay } from './assistantBayScope.js'
+import { bayClearanceReply, buildBayClearancePlan, validateSourceBay } from './assistantBayScope.js'
 import { buildReschedulePlan, rescheduleSchema } from './assistantRescheduling.js'
 import { buildFleetContext, buildAssistantPlan, buildBayAvailability, validateConstraints, constraintsSchema } from './assistantPlanner.js'
 
@@ -44,7 +44,7 @@ export function assistantTools(canPropose) {
 export function hasSchedulingIntent(message, history = []) {
   const text = String(message).trim().toLowerCase()
   if (/\b(don['’]?t|do not|never|without|avoid|not yet|not now|what if|hypothetical|preview|simulate|compare|explain|show me|tell me)\b/.test(text)) return false
-  if (/^(yes|yes please|go ahead|go ahead please|proceed|do it)[.!\s]*$/.test(text)) {
+  if (/^(yes|yes please|yeah|yeah do that|yes do that|sure|do that|go ahead|go ahead please|proceed|do it)[.!\s]*$/.test(text)) {
     const previous = history.filter(m => m.role === 'assistant').at(-1)?.content || ''
     if (/\b(?:can|could|shall|would you like[^.?!]*)\s+(?:me to\s+)?preview\b/i.test(previous)) return false
     return /\b(proposals?|propose|reschedul(?:e|ing)|schedul(?:e|ing)|bookings?|plan|moves?)\b/i.test(previous)
@@ -67,7 +67,7 @@ export function scopeReply(message, history = []) {
     || /\b(execute|run)\s+(sql|code|commands?)\b/.test(text)) return 'I can help with fleet maintenance, bay availability and scheduling proposals. I cannot disclose credentials, run commands or bypass operational checks.'
   if (/\b(poem|poetry|romantic|lyrics|jokes?|roleplay|recipes?|weather|horoscope|politics|stock trading)\b/.test(text)) return 'I’m here to help with SPLRT maintenance planning. We can review fleet priorities, compare maintenance horizons or find suitable bay slots. What would you like to check?'
   const domain = /\b(fleet|lrt|lrvs?|[vd]\d{1,3}|bay[s-]?|maintenance|repair[s]?|fault[s]?|due|overdue|reschedule|rescheduling|move|shift|schedule|scheduling|bookings?|slots?|workshop|horizon|mileage|kilometres?|km|forecast|priority|priorities|vehicle[s]?|service|buffer|lunch|turnaround|duration|cancel|confirm|propos\w*|preview\w*|plan\w*|days?|hours?)\b/.test(text)
-  const continuation = history.length && /^(yes|no|ok|okay|thanks|thank you|go ahead|proceed|do it|and |what about|how about|why|which|when|how many|how long|same|those|these|that|them|it|tomorrow|today|next|shorter|longer|earlier|later|only|exclude|include)\b/.test(text)
+  const continuation = history.length && /^(yes|yeah|sure|do that|no|ok|okay|thanks|thank you|go ahead|proceed|do it|and |what about|how about|why|which|when|how many|how long|same|those|these|that|them|it|tomorrow|today|next|shorter|longer|earlier|later|only|exclude|include)\b/.test(text)
   if (!domain && !continuation) return 'I can help you review SPLRT fleet status, maintenance priorities and bay availability, or prepare a schedule for your review. What would you like to check?'
   return null
 }
@@ -81,14 +81,20 @@ export async function runAssistantTurn({ message, history = [], loadData, savePr
   const boundary = scopeReply(message, history)
   if (boundary) return { text: boundary, plan: null, batch: null, audit: [{ tool: 'scope_guard', outcome: 'redirected' }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences }
   const canPropose = hasSchedulingIntent(message, history) && !pendingBatch
-  const previewAccepted = /^(yes|yes please|go ahead|proceed|do it)[.!\s]*$/i.test(message) && /\b(?:can|could|shall|would you like[^.?!]*)\s+(?:me to\s+)?preview\b/i.test(history.filter(m => m.role === 'assistant').at(-1)?.content || '')
+  const previewAccepted = /^(yes|yes please|yeah|yeah do that|yes do that|sure|do that|go ahead|proceed|do it)[.!\s]*$/i.test(message) && /\b(?:can|could|shall|would you like[^.?!]*)\s+(?:me to\s+)?preview\b/i.test(history.filter(m => m.role === 'assistant').at(-1)?.content || '')
   const needsPreview = previewAccepted || /^(please\s+)?preview\b|^(can|could|would) you (please )?preview\b/i.test(message.trim())
   const tools = assistantTools(canPropose)
   const allowed = new Set(tools.map(t => t.name))
   let data = await loadData()
   const bayReply = bayClearanceReply(message, data, now)
+  const sourceScope = bayReply?.scope || (planningPreferences?.sourceScope && !/\b[VD]\d{1,3}\b/i.test(message) ? planningPreferences.sourceScope : null)
+  const clearanceAction = sourceScope && (bayReply && /\b(how|where|reschedule|preview|move)\b/i.test(message) || /^(yeah(?: do that)?|yes(?: please| do that)?|sure|go ahead|proceed|do it|do that|preview(?: that| options)?|reschedule (them|those)|schedule (it|them)|move (them|those))[.!\s]*$/i.test(message))
+  if (clearanceAction && !pendingBatch) {
+    const plan = buildBayClearancePlan(data, sourceScope, now)
+    const batch = canPropose && plan.bookings.length ? await saveProposal(plan, { sourceScope }) : null
+    return { text: batch ? proposalText(plan, batch) : plan.bookings.length ? `${plan.bookings.length} move${plan.bookings.length === 1 ? ' is' : 's are'} feasible. Review the destinations and times below. Say “schedule it” to prepare the moves for confirmation.` : proposalText(plan, null), plan, batch, audit: [{ tool: 'bay_clearance_plan', count: plan.bookings.length }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences: { sourceScope } }
+  }
   if (bayReply) return { text: bayReply.text, plan: null, batch: null, audit: [{ tool: 'source_bay_lookup', outcome: 'ok' }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences: bayReply.scope ? { sourceScope: bayReply.scope } : null }
-  const sourceScope = planningPreferences?.sourceScope && !/\b[VD]\d{1,3}\b/i.test(message) ? planningPreferences.sourceScope : null
   const context = buildFleetContext(data, now)
   const mentioned = [...message.matchAll(/\b[VD]\d{1,3}\b/gi)].map(m => m[0].toUpperCase())
   const unknown = mentioned.filter(id => !context.vehicles.some(v => v.lrvId.toUpperCase() === id || v.vehicleNumber.toUpperCase() === id))

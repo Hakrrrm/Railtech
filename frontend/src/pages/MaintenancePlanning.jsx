@@ -281,7 +281,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   </div>
 }
 
-function buildMaintenanceModel(data, weekOffset = 0) {
+export function buildMaintenanceModel(data, weekOffset = 0) {
   if (!data) return null
   const vehicles = new Map(data.vehicles.map((vehicle) => [vehicle.lrv_id, vehicle]))
   const activeBookings = data.bookings.filter((booking) => ['proposed', 'confirmed'].includes(booking.status))
@@ -302,8 +302,9 @@ function buildMaintenanceModel(data, weekOffset = 0) {
     lrv_id: fault.lrv_id, work_type: 'corrective', status: vehicles.get(fault.lrv_id)?.status || 'faulty',
     fault, booking: faultBookings.get(fault.id),
   }))
-  const allPriorities = [...corrective, ...preventive].sort(compareMaintenancePriority)
-  const queue = allPriorities.filter((item) => item.booking?.status !== 'confirmed').slice(0, 12)
+  const allPriorities = [...corrective, ...preventive].filter(item => maintenancePriorityCategory(item)).sort(compareMaintenancePriority)
+  const confirmedVehicles = new Set(activeBookings.filter(booking => booking.status === 'confirmed').map(booking => booking.lrv_id))
+  const queue = allPriorities.filter((item, index, rows) => !confirmedVehicles.has(item.lrv_id) && rows.findIndex(row => row.lrv_id === item.lrv_id) === index)
   const weekStartOffset = singaporeWeekStartOffset() + weekOffset * 7
   return {
     queue, overdue: allPriorities.filter((row) => row.status !== 'faulty' && Number(row.km_to_next) < 0).length,

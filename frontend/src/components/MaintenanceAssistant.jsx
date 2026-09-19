@@ -64,6 +64,12 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
         setMessages([])
         setDraft('')
         callbacks.current.onProposal?.(null, null, false)
+        if (input.action === 'history') {
+          const fresh = createAssistantSession()
+          sessionRef.current = fresh
+          setSession(fresh)
+          setTimeout(() => run({ action: 'new', ...fresh }), 0)
+        }
       }
     } finally {
       requestInFlight.current = false

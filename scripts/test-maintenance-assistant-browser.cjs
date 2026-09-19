@@ -185,19 +185,19 @@ async function main() {
     await page.getByRole('button', { name: 'Send message' }).click()
     await page.getByRole('button', { name: 'Confirm schedule', exact: true }).waitFor()
     expiredSessionId = requests.at(-1).sessionId
+    const mutationCount = requests.filter((request) => ['chat', 'confirm', 'discard'].includes(request.action)).length
     await page.getByRole('button', { name: 'Close maintenance assistant' }).click()
     await page.getByRole('button', { name: /Plan with AI/ }).click()
-    await page.getByText('This conversation has expired. Start a new conversation.').waitFor()
+    await page.getByRole('button', { name: 'Which LRVs need attention first, and why?' }).waitFor()
     assert.equal(await page.getByRole('button', { name: 'Confirm schedule', exact: true }).count(), 0)
     assert.equal(await page.getByRole('button', { name: 'New conversation' }).isEnabled(), true)
     assert.equal(await page.getByRole('button', { name: 'Retry request' }).count(), 0)
-    const mutationCount = requests.filter((request) => ['chat', 'confirm', 'discard'].includes(request.action)).length
     await page.getByRole('button', { name: 'New conversation' }).click()
     await page.getByRole('button', { name: 'Which LRVs need attention first, and why?' }).waitFor()
     assert.equal(requests.filter((request) => ['chat', 'confirm', 'discard'].includes(request.action)).length, mutationCount)
     assert.notEqual(requests.at(-1).sessionId, expiredSessionId)
     assert.deepEqual(crashes, [])
-    console.log(JSON.stringify({ passed: ['fleet read', 'proposal blue', 'reload restores proposal', 'comparison preview cannot replace pending batch', 'confirm green + notification', 'discard', 'reschedule overlay preserves original', 'reschedule confirms same booking ID', 'reschedule discard leaves original unchanged', 'validation recovery', 'lost response idempotent retry', 'focus trap', 'escape focus restore', 'mobile viewport fit', 'expired active session allows fresh conversation without replaying mutations'], requests: requests.length, dimensions }, null, 2))
+    console.log(JSON.stringify({ passed: ['fleet read', 'proposal blue', 'reload restores proposal', 'comparison preview cannot replace pending batch', 'confirm green + notification', 'discard', 'reschedule overlay preserves original', 'reschedule confirms same booking ID', 'reschedule discard leaves original unchanged', 'validation recovery', 'lost response idempotent retry', 'focus trap', 'escape focus restore', 'mobile viewport fit', 'expired session automatically recovers without replaying mutations'], requests: requests.length, dimensions }, null, 2))
   } finally { await browser.close() }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1 })

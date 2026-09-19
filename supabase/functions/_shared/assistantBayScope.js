@@ -1,3 +1,4 @@
+import { buildReschedulePlan } from './assistantRescheduling.js'
 // Resolve source-bay requests from authoritative booking rows, not LLM selection.
 export function bayClearanceReply(message, data, now) {
   const match = message.match(/\b(?:clear|empty|vacate|free(?: up)?)\s+(?:out\s+)?bay[ -]*(\d+)\b/i)
@@ -29,4 +30,21 @@ export function sourceBayBookings(data, scope) {
 export function validateSourceBay(data, args, scope) {
   const rows = sourceBayBookings(data, scope)
   if (args.vehicleIds.some(id => !rows.some(b => [b.lrv_id, b.lrv_id.replace(/^D/, 'V')].includes(id.toUpperCase())))) throw new Error('The selected LRVs are not all booked in the source bay on that date. Refresh the bay schedule before proposing moves.')
+}
+
+export function buildBayClearancePlan(data, scope, now) {
+  const source = sourceBayBookings(data, scope)
+  const movable = source.filter(b => b.status === 'confirmed' && Date.parse(b.start_at) > now.getTime())
+  const blocked = source.filter(b => !movable.includes(b))
+  if (!movable.length) return { kind: 'reschedule', bookings: [], skipped: blocked.map(b => ({ lrvId: b.lrv_id, reason: b.status === 'proposed' ? 'Confirm or edit the existing draft booking first.' : 'This visit has already started; use the booking editor to review work in progress.' })), warnings: [], summary: 'No future confirmed bookings can be moved.' }
+  const otherBays = data.bays.filter(b => b.active && b.bay_id !== scope.bayId).map(b => b.bay_id)
+  const args = { vehicleIds: movable.map(b => b.lrv_id), bayIds: otherBays, startDate: scope.date, endDate: scope.date, startTime: null }
+  let plan = otherBays.length ? buildReschedulePlan(data, args, now) : null
+  if (!plan?.bookings.length) {
+    const tomorrow = new Date(Date.parse(`${scope.date}T00:00:00Z`) + 86400000).toISOString().slice(0,10)
+    plan = buildReschedulePlan(data, { ...args, bayIds: data.bays.filter(b => b.active).map(b => b.bay_id), startDate: tomorrow, endDate: tomorrow }, now)
+    if (plan.bookings.length) plan.warnings.push('No same-day alternative fitted. This option moves the selected work to the following day.')
+  }
+  if (blocked.length) plan.warnings.push('Some source visits are drafts or already started and remain in place; these moves alone will not fully clear the bay.')
+  return plan
 }

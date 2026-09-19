@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { bayClearanceReply, validateSourceBay } from '../../../supabase/functions/_shared/assistantBayScope'
 import { runAssistantTurn } from '../../../supabase/functions/_shared/assistantAgent'
 const now = new Date('2026-09-19T13:00:00+08:00')
-const data = { bays: [{ bay_id: 'SPLRT-BAY-1' }, { bay_id: 'SPLRT-BAY-2' }], bookings: [
+const data = { vehicles: ['D12', 'D30'].map(lrv_id => ({ lrv_id, status: 'in_service', fleet: 'splrt' })), rules: [{ cycle_type: 2000, duration_minutes: 120, compatible_bay_type: 'routine' }], settings: { minimum_service_vehicles: 0 }, forecasts: [], bays: [{ bay_id: 'SPLRT-BAY-1', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }, { bay_id: 'SPLRT-BAY-2', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }], bookings: [
   { id: 'a', lrv_id: 'D30', bay_id: 'SPLRT-BAY-1', status: 'confirmed', work_type: 'corrective', start_at: '2026-09-19T13:30:00+08:00', end_at: '2026-09-19T17:30:00+08:00' },
   { id: 'b', lrv_id: 'D12', bay_id: 'SPLRT-BAY-2', status: 'confirmed', work_type: 'preventive', primary_cycle: 2000, start_at: '2026-09-19T18:30:00+08:00', end_at: '2026-09-19T20:30:00+08:00' },
 ] }
@@ -10,7 +10,8 @@ describe('source bay accuracy', () => {
   it('answers the reported Bay 2 query without importing V30 from Bay 1', async () => {
     const provider = vi.fn(), saveProposal = vi.fn()
     const result = await runAssistantTurn({ message: 'i need to clear bay 2 today, how can i reschedule', now, loadData: async () => data, provider, saveProposal })
-    expect(result.text).toContain('V12')
+    expect(result.plan.bookings.map(b => b.lrvId)).toEqual(['D12'])
+    expect(result.plan.bookings[0].bayId).toBe('SPLRT-BAY-1')
     expect(result.text).not.toContain('V30')
     expect(result.planningPreferences.sourceScope).toEqual({ bayId: 'SPLRT-BAY-2', date: '2026-09-19' })
     expect(provider).not.toHaveBeenCalled()
@@ -37,7 +38,16 @@ it('blocks model-selected Bay 1 vehicles in a Bay 2 follow-up before saving', as
   const call = (name, args = {}) => ({ output: [{ type: 'function_call', name, arguments: JSON.stringify(args), call_id: name }] })
   const provider = vi.fn().mockResolvedValueOnce(call('get_fleet_status')).mockResolvedValueOnce(call('propose_reschedule', { vehicleIds: ['V12', 'V30'], bayIds: ['SPLRT-BAY-1'], startDate: null, endDate: null, startTime: null }))
   const saveProposal = vi.fn()
-  const result = await runAssistantTurn({ message: 'Reschedule them', loadData: async () => fleet, provider, saveProposal, now, planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
+  const result = await runAssistantTurn({ message: 'Reschedule those later tomorrow', loadData: async () => fleet, provider, saveProposal, now, planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
   expect(result.text).toContain('not all booked in the source bay')
   expect(saveProposal).not.toHaveBeenCalled()
+})
+
+it('continues yeah do that and saves the reviewed move through saveProposal', async () => {
+  const saveProposal = vi.fn().mockResolvedValue({ id: 'persisted-batch', status: 'proposed' })
+  const result = await runAssistantTurn({ message: 'yeah do that', loadData: async () => data, provider: vi.fn(), saveProposal, now,
+    history: [{ role: 'assistant', content: '1 move is feasible. Say schedule it to prepare the moves for confirmation.' }], planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
+  expect(saveProposal).toHaveBeenCalledOnce()
+  expect(result.batch.id).toBe('persisted-batch')
+  expect(result.plan.bookings[0]).toMatchObject({ bookingId: 'b', bayId: 'SPLRT-BAY-1' })
 })
