@@ -30,7 +30,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
       {data?.summary && <>
         <div className="metric-grid metric-grid-three">
           <MetricCard label="Lifetime planning mileage" value={formatKm(data.summary.lifetime_planning_mileage_km, 1)} detail="Physical anchor + validated segments" tone="info" icon="train"/>
-          <MetricCard label="Mileage today" value={formatKm(data.summary.mileage_today_km, 1)} detail={`${formatKm(data.summary.rolling_daily_rate_km, 1)} rolling daily rate`} tone="success" icon="clock"/>
+          <MetricCard label="Mileage today" value={formatKm(data.summary.mileage_today_km, 1)} detail={`${formatKm(data.summary.rolling_daily_rate_km, 1)} vehicle 7-day history`} tone="success" icon="clock"/>
           <MetricCard label="Last physical check" value={formatKm(data.summary.last_physical_check_km, 1)} detail={formatDateTime(data.summary.last_physical_check_at)} tone="neutral" icon="evidence"/>
         </div>
 
@@ -41,7 +41,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
             return <div className={`cycle-card ${danger ? 'cycle-danger' : ''}`} key={cycle.cycle_type}>
               <div><strong>{cycleLabel(cycle.cycle_type)}</strong><Badge value={Number(cycle.km_to_next) <= 0 ? 'Overdue' : forecastLabel(cycle.forecast_days)} tone={danger ? 'danger' : 'info'}/></div>
               <Progress value={progress} tone={danger ? 'red' : 'teal'}/>
-              <p><b>{formatKm(cycle.km_to_next)}</b> remaining</p><small>{forecastLabel(cycle.forecast_days)} at {formatKm(cycle.rolling_daily_rate_km, 0)}/day</small>
+              <p><b>{formatKm(cycle.km_to_next)}</b> remaining</p><small>{forecastLabel(cycle.forecast_days)} at fleet average {formatKm(cycle.rolling_daily_rate_km, 0)}/day</small>
             </div>
           })}</div>
         </Card>

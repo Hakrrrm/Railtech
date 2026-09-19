@@ -401,6 +401,11 @@ begin
     raise exception 'D12 must forecast as due today from its mileage state';
   end if;
 
+  if (select count(distinct rolling_daily_rate_km) from cycle_forecasts
+      where rolling_daily_rate_km is not null) <> 1 then
+    raise exception 'Maintenance forecasts must use one fleet-average daily rate';
+  end if;
+
   if exists (
     select 1 from deployment_eligibility
     where lrv_id = 'D08' and (eligible or free_of_duty)
