@@ -17,7 +17,7 @@ The model cannot confirm, cancel existing work, alter mileage, complete maintena
 - `frontend/src/components/MaintenanceAssistant.jsx`: accessible responsive chat drawer, independent preview/proposal cards, explicit confirmation and discard, retry/reload recovery.
 - `frontend/src/lib/maintenanceAssistantApi.js`: Supabase Edge Function transport and browser session capability storage. Requests retain UUIDs across retries.
 - `supabase/functions/maintenance-assistant/index.ts`: authenticated/capability-checked endpoint, database reads, Responses API calls, durable messages and proposal actions. No API key reaches the browser.
-- `supabase/functions/_shared/assistantAgent.js`: bounded tool loop, strict tool schemas, instructions, explicit scheduling-intent gate and usage accounting. The only model tools are fleet status, bay availability, preview, proposal and a clarification question. Explicit preview/proposal requests must produce a computed plan or clarification rather than just a conversational promise.
+- `supabase/functions/_shared/assistantAgent.js`: semantic conversation interpretation, bounded tool loop, strict tool schemas and usage accounting. There are no keyword-based conversational routes. GPT-4.1 mini resolves intent, source bay/date and contextual assent before proposal tools are exposed. The only model tools are fleet status, bay availability, preview, proposal and a clarification question. Explicit preview/proposal requests must produce a computed plan or clarification rather than just a conversational promise.
 - `supabase/functions/_shared/assistantPlanner.js`: deterministic planner shared with synthetic tests. The model selects supported constraints; it never chooses arbitrary booking timestamps.
 - Migrations `202609190002` and `202609190003`: private sessions, messages, proposal batches, audit, rate limits, atomic reservations and confirmation, expiry, cleanup and demo reset integration.
 
@@ -101,3 +101,16 @@ On 19 September 2026: 123 unit tests, 12 isolated browser flows, 17 deployed HTT
 Rescheduling follow-up: 142 unit tests, 15 isolated browser flows and all three SQL rollback suites passed. The live model successfully previewed the V23/V24 move to Bay 2 on 21 September. Further live-model requests reached the existing daily cap; it was not raised. Preview and proposal summaries now use concise deterministic text. See `maintenance-reschedule-evaluation.json`.
 
 Priority auto-scheduling uses the same overdue/due-within-seven-days/fault selection as Fleet Overview, rather than the first 12 future forecasts. Bay-clearance questions compute a scoped reschedule preview immediately; short affirmative replies prepare the proposal for separate confirmation. Verified with 152 unit tests, 15 browser flows, 17 deployed HTTP checks, transactional reschedule SQL tests, and a live preview/propose/history/discard flow that preserved original bookings.
+
+
+## Conversational planning revision
+
+Every turn uses a structured model interpretation of the latest request, with history supplied as reference data. It distinguishes discussion, read-only previews, provisional proposals, clarification and unrelated requests. An operational outcome such as “I need Bay 2 clear tomorrow” authorizes a proposal; the separate Confirm button remains mandatory for actual moves.
+
+Bay-clearance tools select source bookings from current database rows. Generic rescheduling tools are checked against the interpreted source scope. Whole-bay requests must consider every movable source booking. The planner and transactional database checks remain deterministic.
+
+A saved preview records its validated request and slot signature. Natural assent re-runs that request and compares the resulting slots before saving a proposal. If the schedule changed, the operator sees an updated preview instead. Dates and times appear in the structured comparison card; model prose does not redefine them.
+
+Migration 202609190007 permits moving future confirmed preventive visits for vehicles labelled maintenance, matching the existing planner. Already-started bookings and faulty-vehicle preventive moves remain blocked.
+
+Validation: `node scripts/evaluate-maintenance-conversation.mjs` runs a real GPT-4.1 mini conversation against the synthetic project, persists and discards proposals, and verifies original bookings are unchanged. Results are recorded in `docs/maintenance-conversation-evaluation.json`. Unit tests cover tool permissions, malformed interpretation, stale previews, source-bay selection and uncertain writes. SQL reschedule tests run in a transaction that rolls back.

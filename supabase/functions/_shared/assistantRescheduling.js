@@ -37,6 +37,7 @@ export function buildReschedulePlan(data, input, now = new Date()) {
     const sources = (data.bookings || []).filter((booking) => booking.lrv_id === vehicle.lrv_id && ['proposed', 'confirmed'].includes(booking.status))
     if (sources.length !== 1 || sources[0].status !== 'confirmed') { skipped.push({ lrvId: vehicle.lrv_id, reason: 'Select an LRV with exactly one confirmed unresolved booking.' }); continue }
     const source = sources[0]
+    if (source.work_type === 'preventive' && vehicle.status === 'faulty') { skipped.push({ lrvId: vehicle.lrv_id, reason: 'This vehicle is faulty; review its repair status before moving a preventive booking.' }); continue }
     if (!Number.isFinite(Date.parse(source.start_at)) || Date.parse(source.start_at) <= now.getTime()) { skipped.push({ lrvId: vehicle.lrv_id, reason: 'Only bookings that have not started can be rescheduled.' }); continue }
     selected.set(vehicle.lrv_id, { vehicle, source })
   }

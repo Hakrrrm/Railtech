@@ -13,7 +13,7 @@ for(const message of ['sure do that','sounds good, go for it']){
  try{
  const date=new Date(Date.parse(source.start_at)+8*3600000).toISOString().slice(0,10)
  const number=source.bay_id.match(/\d+$/)[0]
- const preview=await act('chat',{message:`I need to clear bay ${number} on ${date}, how can I reschedule?`})
+ const preview=await act('chat',{message:`How could we clear bay ${number} on ${date}? Preview only; do not add a proposal yet.`})
  assert(preview.plan?.bookings?.length,'Need feasible preview')
  const proposed=await act('chat',{message});pending=proposed.batch?.id
  assert(pending,JSON.stringify(proposed.messages?.at(-1)))

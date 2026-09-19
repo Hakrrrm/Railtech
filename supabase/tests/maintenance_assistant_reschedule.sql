@@ -97,6 +97,15 @@ begin
   perform pg_temp.reschedule_expect_error(format('select assistant_apply_proposal(%L,%L,''confirm'')',s,batch->>'id'),'operating duty');
   delete from duty_assignments where lrv_id='ZZ-R1';
   perform assistant_apply_proposal(s,(batch->>'id')::uuid,'discard');
+  -- A maintenance label is not proof that a future visit has started.
+  update vehicles set status='maintenance' where lrv_id='ZZ-R1';
+  input:=pg_temp.reschedule_input(array[b1],'ZZ-RB1');
+  batch:=assistant_store_reschedule(s,gen_random_uuid(),input,pg_temp.reschedule_metadata(input));
+  assert batch->>'status'='proposed','Future maintenance booking should be movable';
+  perform assistant_apply_proposal(s,(batch->>'id')::uuid,'discard');
+  update vehicles set status='faulty' where lrv_id='ZZ-R1';
+  perform pg_temp.reschedule_expect_error(format('select assistant_store_reschedule(%L,%L,%L,%L)',s,gen_random_uuid(),input,pg_temp.reschedule_metadata(input)),'not available');
+  update vehicles set status='in_service' where lrv_id='ZZ-R1';
   -- Already-started bookings cannot move.
   update maintenance_bookings set start_at=day-interval '3 days',end_at=day-interval '3 days'+interval '2 hours' where id=b1;
   input:=pg_temp.reschedule_input(array[b1],'ZZ-RB2');
