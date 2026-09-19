@@ -540,6 +540,9 @@ select
 from duty_assignments as assignment
 where assignment.demo_key = 'demo:duty:D29';
 
+-- Add routine visits after the base fixture (migrations install this helper).
+select restore_demo_outlook_bookings();
+
 commit;
 
 -- Compact load summary for the Supabase SQL editor.

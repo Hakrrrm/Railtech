@@ -6,7 +6,7 @@ import { Badge, Card, DataBoundary, MetricCard, PageHeader, Progress } from '../
 import { MaintenancePhoto } from '../components/MaintenancePhoto'
 import { Icon } from '../components/Icons'
 
-const routeSegments = ['SIM_SK_A_B', 'SIM_SK_B_C', 'SIM_SK_C_D', 'SIM_SK_D_E', 'SIM_SK_E_F', 'SIM_SK_F_A']
+import { resolveSegment, segmentLabel, segmentDirection, routeForSegment } from '../lib/trackSegments'
 
 export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
   const [tab, setTab] = useState('trend')
@@ -67,7 +67,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
 
         <Card title="Recent activity" eyebrow="Completed segment traversals" className="activity-card">
           {data.traversals.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Segment</th><th>Direction</th><th>Distance</th><th>Device mileage</th><th>GNSS quality</th></tr></thead><tbody>
-            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong>{event.seg_id}</strong></td><td>{event.dir || '—'}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` · ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
+            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong title={event.seg_id}>{segmentLabel(event.seg_id, event.dir)}</strong></td><td>{segmentDirection(event.seg_id, event.dir)}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` · ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
           </tbody></table></div> : <p className="empty-copy">No completed segments have been received for this vehicle.</p>}
         </Card>
 
@@ -98,10 +98,10 @@ function TrendChart({ trend }) {
 }
 
 function RoutePosition({ current, direction }) {
-  const activeIndex = routeSegments.indexOf(current)
-  if (current && activeIndex < 0) {
-    return <div className="route-map"><p className="empty-copy">The latest segment is <strong>{current}</strong>. Route geometry has not been loaded for this track dataset, so the dashboard will not guess a position.</p></div>
+  const resolved = resolveSegment(current, direction)
+  const segments = routeForSegment(current, direction)
+  if (current && !resolved) {
+    return <div className="route-map"><p className="empty-copy">The latest segment is <strong>{current}</strong>. This segment is not in the Sengkang East Loop track dataset.</p></div>
   }
-  const directionLabel = { E: 'Eastbound', W: 'Westbound', N: 'Northbound', S: 'Southbound' }[direction] || 'Direction unavailable'
-  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' → ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
+  return <div className="route-map"><div className="loop-line">{segments.map((segment, index) => <div className={`route-stop ${segment.seg_id === resolved?.seg_id ? 'active' : ''}`} key={segment.seg_id}><span>{segment.seg_id === resolved?.seg_id ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.from} → {segment.to}</small></div>)}</div><p><Badge value={segmentDirection(current, direction)} tone="info"/> Last completed segment: <strong>{segmentLabel(current, direction)}</strong></p></div>
 }

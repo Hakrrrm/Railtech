@@ -1,0 +1,98 @@
+[
+  {
+    "seg_id": "Senkang_East_Outer_Sengkang_Compassvale",
+    "order": 0,
+    "loop": "Senkang East Outer",
+    "from": "Sengkang",
+    "to": "Compassvale",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Outer_Compassvale_Rumbia",
+    "order": 1,
+    "loop": "Senkang East Outer",
+    "from": "Compassvale",
+    "to": "Rumbia",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Outer_Rumbia_Bakau",
+    "order": 2,
+    "loop": "Senkang East Outer",
+    "from": "Rumbia",
+    "to": "Bakau",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Outer_Bakau_Kangkar",
+    "order": 3,
+    "loop": "Senkang East Outer",
+    "from": "Bakau",
+    "to": "Kangkar",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Outer_Kangkar_Ranggung",
+    "order": 4,
+    "loop": "Senkang East Outer",
+    "from": "Kangkar",
+    "to": "Ranggung",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Outer_Ranggung_Sengkang",
+    "order": 5,
+    "loop": "Senkang East Outer",
+    "from": "Ranggung",
+    "to": "Sengkang",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Sengkang_Ranggung",
+    "order": 0,
+    "loop": "Senkang East Inner",
+    "from": "Sengkang",
+    "to": "Ranggung",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Ranggung_Kangkar",
+    "order": 1,
+    "loop": "Senkang East Inner",
+    "from": "Ranggung",
+    "to": "Kangkar",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Kangkar_Bakau",
+    "order": 2,
+    "loop": "Senkang East Inner",
+    "from": "Kangkar",
+    "to": "Bakau",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Bakau_Rumbia",
+    "order": 3,
+    "loop": "Senkang East Inner",
+    "from": "Bakau",
+    "to": "Rumbia",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Rumbia_Compassvale",
+    "order": 4,
+    "loop": "Senkang East Inner",
+    "from": "Rumbia",
+    "to": "Compassvale",
+    "bidir": false
+  },
+  {
+    "seg_id": "Senkang_East_Inner_Compassvale_Sengkang",
+    "order": 5,
+    "loop": "Senkang East Inner",
+    "from": "Compassvale",
+    "to": "Sengkang",
+    "bidir": false
+  }
+]
