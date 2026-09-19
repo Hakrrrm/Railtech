@@ -30,7 +30,7 @@ export function bayClearanceReply(message, data, now, pendingScope = null) {
   const text = rows.map(b => {
     const label = b.work_type === 'corrective' ? 'Corrective repair' : `${Number(b.primary_cycle) / 1000}K maintenance`
     const local = value => new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ')
-    return `â€¢ ${b.lrv_id.replace(/^D/, 'V')} Â· ${label} Â· ${local(b.start_at)}â€“${local(b.end_at)}${b.status === 'proposed' ? ' (draft)' : Date.parse(b.start_at) <= now.getTime() ? ' (already started; cannot reschedule)' : ''}`
+    return `• ${b.lrv_id.replace(/^D/, 'V')} · ${label} · ${local(b.start_at)}–${local(b.end_at)}${b.status === 'proposed' ? ' (draft)' : Date.parse(b.start_at) <= now.getTime() ? ' (already started; cannot reschedule)' : ''}`
   }).join('\n')
   return { text: `${title}:\n${text}\n\nI can preview moves for the future confirmed bookings; work already started needs operator review.`, scope: { bayId, date } }
 }

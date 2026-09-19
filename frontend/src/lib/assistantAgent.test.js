@@ -166,7 +166,7 @@ describe('reschedule orchestration', () => {
     expect(result.text.split(/\s+/).length).toBeLessThan(35)
   })
   it('previews moves without writing or repetitive model narration', async () => {
-    const args = setup([call('get_fleet_status'), call('preview_reschedule', move), reply('V12 can move to Bay 2 on 21 September, 06:00â€“08:00.')], { loadData: vi.fn().mockResolvedValue(booked()) })
+    const args = setup([call('get_fleet_status'), call('preview_reschedule', move), reply('V12 can move to Bay 2 on 21 September, 06:00–08:00.')], { loadData: vi.fn().mockResolvedValue(booked()) })
     const result = await runAssistantTurn({ ...args, message: 'Preview moving V12 to bay 2' })
     expect(result.plan.kind).toBe('reschedule')
     expect(args.saveProposal).not.toHaveBeenCalled()
@@ -185,4 +185,8 @@ describe('reschedule orchestration', () => {
     await runAssistantTurn({ ...args, message: 'Could V12 move to bay 2?' })
     expect(args.saveProposal).not.toHaveBeenCalled()
   })
+})
+
+it.each(['Do not clear bay 2 tomorrow', 'What if I clear bay 2 tomorrow', 'Preview clearing bay 2 tomorrow', 'How can I clear bay 2 tomorrow?'])('keeps hypothetical clearance read-only: %s', message => {
+  expect(hasSchedulingIntent(message)).toBe(false)
 })

@@ -67,7 +67,7 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
 
         <Card title="Recent activity" eyebrow="Completed segment traversals" className="activity-card">
           {data.traversals.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Segment</th><th>Direction</th><th>Distance</th><th>Device mileage</th><th>GNSS quality</th></tr></thead><tbody>
-            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong>{event.seg_id}</strong></td><td>{event.dir || 'â€”'}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` Â· ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
+            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong>{event.seg_id}</strong></td><td>{event.dir || '—'}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` · ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
           </tbody></table></div> : <p className="empty-copy">No completed segments have been received for this vehicle.</p>}
         </Card>
 
@@ -103,5 +103,5 @@ function RoutePosition({ current, direction }) {
     return <div className="route-map"><p className="empty-copy">The latest segment is <strong>{current}</strong>. Route geometry has not been loaded for this track dataset, so the dashboard will not guess a position.</p></div>
   }
   const directionLabel = { E: 'Eastbound', W: 'Westbound', N: 'Northbound', S: 'Southbound' }[direction] || 'Direction unavailable'
-  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' â†’ ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
+  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' → ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
 }

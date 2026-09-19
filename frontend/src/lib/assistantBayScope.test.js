@@ -15,7 +15,7 @@ describe('source bay accuracy', () => {
     expect(result.text).not.toContain('V30')
     expect(result.planningPreferences.sourceScope).toEqual({ bayId: 'SPLRT-BAY-2', date: '2026-09-19' })
     expect(provider).not.toHaveBeenCalled()
-    expect(saveProposal).not.toHaveBeenCalled()
+    expect(saveProposal).toHaveBeenCalledOnce()
   })
   it('rejects out-of-bay selections and sources moved since the earlier reply', () => {
     const scope = { bayId: 'SPLRT-BAY-2', date: '2026-09-19' }
@@ -86,4 +86,18 @@ describe('bay clearance date conversations', () => {
     expect(result.plan.bookings.map(b => b.bookingId)).toEqual(['a'])
     expect(args.saveProposal).not.toHaveBeenCalled()
   })
+})
+
+it('prepares a proposal immediately for the screenshot clearance request', async () => {
+  const tomorrow = { ...data, bookings: data.bookings.map(b => ({ ...b, start_at: b.start_at.replace('09-19', '09-20'), end_at: b.end_at.replace('09-19', '09-20') })) }
+  const saveProposal = vi.fn().mockResolvedValue({ id: 'saved', status: 'proposed' })
+  const result = await runAssistantTurn({ message: 'i need to clear bay 2 tomorrow', now, loadData: async () => tomorrow, provider: vi.fn(), saveProposal })
+  expect(result.batch.id).toBe('saved')
+  expect(result.plan.bookings.map(b => b.bookingId)).toEqual(['b'])
+  expect(result.text).toContain('Confirm reschedule')
+})
+it('renders readable punctuation in bay summaries', () => {
+  const result = bayClearanceReply('clear bay 2 today', data, now)
+  expect(result.text).toContain('• V12 ·')
+  expect(result.text).not.toMatch(/[\u00c2\u00c3]/)
 })
