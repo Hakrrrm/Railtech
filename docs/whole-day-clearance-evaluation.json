@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-19T06:56:37.587Z",
+  "results": [
+    {
+      "message": "Both bays will be closed on 22 Sept, help me reschedule",
+      "text": "3 proposed moves shown in blue. Original bookings stay in place until you select Confirm reschedule.",
+      "intent": "propose",
+      "count": 3,
+      "status": "proposed"
+    },
+    {
+      "message": "Clear bookings for tomorrow",
+      "text": "3 proposed moves shown in blue. Original bookings stay in place until you select Confirm reschedule.",
+      "intent": "propose",
+      "count": 3,
+      "status": "proposed"
+    }
+  ]
+}

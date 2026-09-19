@@ -3,6 +3,7 @@ import segments from './trackSegments.json'
 // Station metadata mirrors track.geojson. Keep source IDs (including its
 // 'Senkang' spelling) intact for matching real GNSS packets.
 const legacy = ['SIM_SK_A_B', 'SIM_SK_B_C', 'SIM_SK_C_D', 'SIM_SK_D_E', 'SIM_SK_E_F', 'SIM_SK_F_A']
+const inner = segments.filter(segment => segment.loop.endsWith('Inner')).sort((a, b) => a.order - b.order)
 const outer = segments.filter(segment => segment.loop.endsWith('Outer')).sort((a, b) => a.order - b.order)
 
 export function resolveSegment(id, direction) {
@@ -12,7 +13,9 @@ export function resolveSegment(id, direction) {
   // telemetry, odometers or V18's OCR test evidence to relabel the demo route.
   const pair = outer[legacy.indexOf(id)]
   if (!pair) return null
-  return direction === 'W' ? segments.find(segment => segment.from === pair.to && segment.to === pair.from) : pair
+  // Legacy IDs encode the ordinal traversal within each lap, not a fixed
+  // station pair. Both directions were seeded A_B ... F_A chronologically.
+  return direction === 'W' ? inner[legacy.indexOf(id)] : pair
 }
 
 export function segmentLabel(id, direction) {

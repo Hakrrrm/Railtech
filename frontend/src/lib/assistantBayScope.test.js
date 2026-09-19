@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { sourceBayBookings, validateSourceBay } from '../../../supabase/functions/_shared/assistantBayScope.js'
+import { sourceBayBookings, validateSourceBay, buildBayClearancePlan } from '../../../supabase/functions/_shared/assistantBayScope.js'
 import { runAssistantTurn } from '../../../supabase/functions/_shared/assistantAgent.js'
 const now = new Date('2026-09-19T13:00:00+08:00')
 const data = { vehicles: ['D12', 'D30'].map(lrv_id => ({ lrv_id, status: 'in_service', fleet: 'splrt' })), rules: [{ cycle_type: 2000, duration_minutes: 120, compatible_bay_type: 'routine' }], settings: { minimum_service_vehicles: 0 }, forecasts: [], bays: [{ bay_id: 'SPLRT-BAY-1', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }, { bay_id: 'SPLRT-BAY-2', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }], bookings: [
@@ -58,5 +58,43 @@ describe('acceptance of an exact reviewed preview', () => {
    if (changed) { expect(saveProposal).not.toHaveBeenCalled(); expect(result.text).toContain('schedule has changed') }
    else { expect(saveProposal).toHaveBeenCalledOnce(); expect(result.plan.bookings).toEqual(preview.plan.bookings) }
    expect(provider).toHaveBeenCalledOnce()
+ })
+})
+
+
+describe('whole-day clearance', () => {
+ const wholeDay = { bayId: 'ALL', date: '2026-09-20' }
+ const fixture = () => ({ ...data, bookings: data.bookings.map(b => ({ ...b,
+   work_type: 'preventive', primary_cycle: 2000,
+   start_at: '2026-09-20T14:00:00+08:00', end_at: '2026-09-20T16:00:00+08:00'
+ })) })
+ it('selects both bays and moves every booking outside the day', () => {
+   const plan = buildBayClearancePlan(fixture(), wholeDay, now)
+   expect(plan.bookings.map(b => b.bookingId).sort()).toEqual(['a','b'])
+   expect(plan.bookings.every(b => Date.parse(b.startAt) >= Date.parse('2026-09-21T00:00:00+08:00'))).toBe(true)
+ })
+ it('searches later dates if the following day is unavailable', () => {
+   const input = fixture()
+   input.bookings.push(...input.bays.map((b,i) => ({ id: `busy${i}`, lrv_id: `OTHER${i}`, bay_id: b.bay_id, status: 'confirmed', start_at: '2026-09-21T00:00:00+08:00', end_at: '2026-09-22T00:00:00+08:00' })))
+   const plan = buildBayClearancePlan(input, wholeDay, now)
+   expect(plan.bookings).toHaveLength(2)
+   expect(plan.bookings.every(b => Date.parse(b.startAt) >= Date.parse('2026-09-22T00:00:00+08:00'))).toBe(true)
+ })
+ it('includes overlapping long stays and flags work already started', () => {
+   const input = fixture()
+   input.bookings[0].start_at = '2026-09-18T08:00:00+08:00'
+   expect(sourceBayBookings(input, wholeDay)).toHaveLength(2)
+   const plan = buildBayClearancePlan(input, wholeDay, now)
+   expect(plan.bookings.map(b => b.bookingId)).toEqual(['b'])
+   expect(plan.warnings.join(' ')).toContain('will not fully clear')
+ })
+ it('creates a persisted blue proposal from an interpreted all-bay request', async () => {
+   const saveProposal = vi.fn().mockResolvedValue({ id: 'day-plan', status: 'proposed' })
+   const provider = vi.fn().mockResolvedValueOnce(call('interpret_request', { mode: 'propose', acceptsPreviousPlan: false, sourceBayId: 'ALL', sourceDate: wholeDay.date, question: null }))
+     .mockResolvedValueOnce(call('get_fleet_status')).mockResolvedValueOnce(call('propose_bay_clearance'))
+   const result = await runAssistantTurn({ message: 'Both bays will be closed tomorrow, help me reschedule', now, loadData: async () => fixture(), saveProposal, provider })
+   expect(saveProposal).toHaveBeenCalledOnce()
+   expect(result.plan.bookings).toHaveLength(2)
+   expect(result.batch.id).toBe('day-plan')
  })
 })
