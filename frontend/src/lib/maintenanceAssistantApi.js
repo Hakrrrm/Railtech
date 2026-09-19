@@ -50,3 +50,11 @@ export async function requestMaintenanceAssistant(input) {
   try { globalThis.localStorage.removeItem(pendingKey) } catch { /* The server also deduplicates requests. */ }
   return data
 }
+
+export function clearAssistantCache() {
+  try {
+    globalThis.localStorage.removeItem(sessionKey)
+    globalThis.localStorage.removeItem(pendingKey)
+    globalThis.localStorage.removeItem('railtech-auto-schedule-bookings')
+  } catch { /* Server-side demo state has still been reset. */ }
+}

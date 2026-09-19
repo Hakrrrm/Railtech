@@ -112,13 +112,13 @@ begin
   perform pg_temp.expect_error(format('select assistant_reserve_turn(%L,%L)',s,repeat('c',64)), 'still running');
   update assistant_sessions set busy_until=null where id=s;
   insert into assistant_audit(session_id,event,details)
-    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('c',64)) from generate_series(1,29);
+    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('c',64)) from generate_series(1,99);
   perform pg_temp.expect_error(format('select assistant_reserve_turn(%L,%L)',s,repeat('c',64)), 'usage limit');
   insert into assistant_audit(session_id,event,details)
-    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('d',64)) from generate_series(1,60);
+    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('d',64)) from generate_series(1,500);
   perform pg_temp.expect_error(format('select assistant_reserve_turn(%L,%L)',s2,repeat('d',64)), 'usage limit');
   insert into assistant_audit(session_id,event,details)
-    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('e',64)) from generate_series(1,200);
+    select s,'turn_reserved',jsonb_build_object('actorHash',repeat('e',64)) from generate_series(1,2000);
   perform pg_temp.expect_error(format('select assistant_reserve_turn(%L,%L)',s2,repeat('f',64)), 'usage limit');
   update assistant_sessions set expires_at=now()-interval '1 second' where id=s2;
   perform pg_temp.expect_error(format('select assistant_reserve_turn(%L,%L)',s2,repeat('d',64)), 'session expired');

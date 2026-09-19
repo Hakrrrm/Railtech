@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Icon } from './Icons'
 import { formatDate } from '../lib/format'
 import { resetDashboardDemo } from '../lib/api'
+import { clearAssistantCache } from '../lib/maintenanceAssistantApi'
 import { Toast } from './UI'
 
 const navItems = [
@@ -21,6 +22,7 @@ export function Layout({ route, navigate, children, updatedAt }) {
     setResetting(true); setResetError(null)
     try {
       await resetDashboardDemo()
+      clearAssistantCache()
       globalThis.location.reload()
     } catch (error) {
       setResetError(error.message); setResetting(false); setMenuOpen(false)
