@@ -234,9 +234,9 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
               const decisionStatus = queueStatus(item)
               return <article className="maintenance-priority-item" key={item.fault?.id || item.lrv_id}>
                 <span className={`queue-rank ${decisionStatus === 'overdue' ? 'urgent' : ''}`}>{index + 1}</span>
-                <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {item.work_type === 'corrective' ? 'Corrective repair' : cycleLabel(item.cycle_type)}</strong><small>{queueDecisionLabel(item)}</small></div>
+                <div className="maintenance-priority-main"><strong>{vehicleLabel(item.lrv_id)} · {item.work_type === 'corrective' ? 'Corrective repair' : cycleLabel(item.cycle_type)} <span className="queue-duration">· {queueDuration(item, state.data.rules)}</span></strong><small>{queueDecisionLabel(item)}</small></div>
                 <button className={`priority-add ${item.booking ? 'priority-booked' : ''} ${item.work_type === 'corrective' ? 'priority-fault' : ''}`} onClick={() => suggest(item)} aria-label={item.booking ? `Open the existing ${vehicleLabel(item.lrv_id)} booking` : `Find a collision-free slot for ${vehicleLabel(item.lrv_id)}`} title={item.booking ? 'Open existing booking' : 'Find the first compatible free slot'}><Icon name={item.booking ? 'check' : 'plus'}/></button>
-                <div className="maintenance-priority-meta"><Badge value={decisionStatus}/><b>{queuePlanningDetail(item, state.data.rules)}</b></div>
+                <div className="maintenance-priority-meta"><Badge value={decisionStatus}/><b>{queuePlanningDetail(item)}</b></div>
               </article>
             })}{visibleQueue.length === 0 && <div className="empty-copy">No vehicles match this priority filter.</div>}</div>
           </Card>
@@ -387,13 +387,18 @@ function queueStatus(item) {
   return 'due_soon'
 }
 
-function queuePlanningDetail(item, rules) {
-  if (item.work_type === 'corrective') return `${item.fault.severity} · ${formatDuration(item.fault.estimated_duration_minutes)}`
+function queueDuration(item, rules) {
+  const duration = item.work_type === 'corrective' ? item.fault.estimated_duration_minutes
+    : rules.find((rule) => Number(rule.cycle_type) === Number(item.cycle_type))?.duration_minutes
+  return formatDuration(duration)
+}
+
+function queuePlanningDetail(item) {
+  if (item.work_type === 'corrective') return item.fault.severity
   const km = Number(item.km_to_next)
-  const duration = rules.find((rule) => Number(rule.cycle_type) === Number(item.cycle_type))?.duration_minutes
-  if (km < 0) return `${formatKm(Math.abs(km))} overdue · ${formatDuration(duration)}`
-  if (km === 0) return `Due now · ${formatDuration(duration)}`
-  return `${formatKm(km)} remaining · ${formatDuration(duration)}`
+  if (km < 0) return `${formatKm(Math.abs(km))} overdue`
+  if (km === 0) return 'Due now'
+  return `${formatKm(km)} remaining`
 }
 
 function bookingWorkLabel(booking) {
