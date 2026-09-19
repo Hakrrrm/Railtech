@@ -53,7 +53,12 @@ async function main() {
       }
       if (input.action === 'chat') {
         session.messages.push({ id: randomUUID(), role: 'user', content: input.message })
-        if (/propose/i.test(input.message)) {
+        if (/reschedule/i.test(input.message)) {
+          const original = bookings.find((booking) => booking.status === 'confirmed')
+          session.batch = { id: randomUUID(), status: 'proposed', booking_ids: [original.id], metadata: { kind: 'reschedule' } }
+          session.plan = { kind: 'reschedule', bookings: [{ bookingId: original.id, lrvId: original.lrv_id, bayId: original.bay_id === 'B1' ? 'B2' : 'B1', startAt: original.start_at, endAt: original.end_at, primaryCycle: original.primary_cycle, original: { id: original.id, bayId: original.bay_id, startAt: original.start_at, endAt: original.end_at } }], skipped: [], warnings: [] }
+          session.messages.push({ id: randomUUID(), role: 'assistant', content: 'The proposed move is ready to review.' })
+        } else if (/propose/i.test(input.message)) {
           const id = randomUUID()
           bookings.push({ id, lrv_id: 'D12', bay_id: 'B1', start_at: startAt, end_at: endAt, primary_cycle: 2000, bundled_cycles: [2000], work_type: 'preventive', status: 'proposed' })
           session.batch = { id: randomUUID(), status: 'proposed', booking_ids: [id], expires_at: new Date(Date.now() + 3600000).toISOString() }
@@ -66,7 +71,11 @@ async function main() {
       }
       if (input.action === 'confirm' || input.action === 'discard') {
         session.batch.status = input.action === 'confirm' ? 'confirmed' : 'discarded'
-        for (const booking of bookings.filter((booking) => session.batch.booking_ids.includes(booking.id))) booking.status = input.action === 'confirm' ? 'confirmed' : 'cancelled'
+        for (const booking of bookings.filter((booking) => session.batch.booking_ids.includes(booking.id))) {
+          if (session.plan.kind === 'reschedule') {
+            if (input.action === 'confirm') { const move = session.plan.bookings.find((item) => item.bookingId === booking.id); booking.bay_id = move.bayId; booking.start_at = move.startAt; booking.end_at = move.endAt }
+          } else booking.status = input.action === 'confirm' ? 'confirmed' : 'cancelled'
+        }
       }
       const body = JSON.stringify({ sessionId: input.sessionId, ...session })
       cached.set(input.requestId, body)
@@ -106,6 +115,41 @@ async function main() {
     await page.getByRole('button', { name: 'Send message' }).click()
     await page.getByRole('button', { name: 'Discard proposal' }).click()
     await page.getByText('AI proposal discarded. The LRVs are available for planning again.').waitFor()
+    assert.equal(await page.locator('.booking-proposed').count(), 0)
+
+    await page.getByRole('button', { name: 'New conversation' }).click()
+    const originalBooking = bookings.find((booking) => booking.status === 'confirmed')
+    const originalId = originalBooking.id
+    const originalBay = originalBooking.bay_id
+    const originalCount = bookings.length
+    await composer.fill('Reschedule V12 to Bay 2')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByRole('button', { name: 'Confirm reschedule', exact: true }).waitFor()
+    assert.equal(originalBooking.bay_id, originalBay)
+    assert.equal(bookings.length, originalCount)
+    assert.equal(await page.locator('.booking-proposed').count(), 1)
+    assert.equal(await page.locator('.booking-confirmed').count(), 1)
+    await page.reload()
+    await page.getByRole('button', { name: /Plan with AI/ }).click()
+    await page.getByRole('button', { name: 'Confirm reschedule', exact: true }).waitFor()
+    assert.equal(await page.locator('.booking-proposed').count(), 1)
+    assert.equal(originalBooking.bay_id, originalBay)
+    await page.getByRole('button', { name: 'Close maintenance assistant' }).click()
+    await page.getByRole('button', { name: 'Review proposed move for V12' }).click()
+    await page.getByRole('button', { name: 'Confirm reschedule', exact: true }).click()
+    await page.getByText('Reschedule confirmed. The bookings have moved and are green.').waitFor()
+    assert.equal(originalBooking.id, originalId)
+    assert.equal(originalBooking.bay_id, 'B2')
+    assert.equal(bookings.length, originalCount)
+    assert.equal(await page.locator('.booking-proposed').count(), 0)
+    await page.getByRole('button', { name: 'New conversation' }).click()
+    await composer.fill('Reschedule V12 back to Bay 1')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await page.getByRole('button', { name: 'Confirm reschedule', exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Discard proposal' }).click()
+    await page.getByText('Reschedule discarded. Original bookings are unchanged.').waitFor()
+    assert.equal(originalBooking.bay_id, 'B2')
+    assert.equal(originalBooking.status, 'confirmed')
     assert.equal(await page.locator('.booking-proposed').count(), 0)
 
     rejectNextChat = true
@@ -153,7 +197,7 @@ async function main() {
     assert.equal(requests.filter((request) => ['chat', 'confirm', 'discard'].includes(request.action)).length, mutationCount)
     assert.notEqual(requests.at(-1).sessionId, expiredSessionId)
     assert.deepEqual(crashes, [])
-    console.log(JSON.stringify({ passed: ['fleet read', 'proposal blue', 'reload restores proposal', 'comparison preview cannot replace pending batch', 'confirm green + notification', 'discard', 'validation recovery', 'lost response idempotent retry', 'focus trap', 'escape focus restore', 'mobile viewport fit', 'expired active session allows fresh conversation without replaying mutations'], requests: requests.length, dimensions }, null, 2))
+    console.log(JSON.stringify({ passed: ['fleet read', 'proposal blue', 'reload restores proposal', 'comparison preview cannot replace pending batch', 'confirm green + notification', 'discard', 'reschedule overlay preserves original', 'reschedule confirms same booking ID', 'reschedule discard leaves original unchanged', 'validation recovery', 'lost response idempotent retry', 'focus trap', 'escape focus restore', 'mobile viewport fit', 'expired active session allows fresh conversation without replaying mutations'], requests: requests.length, dimensions }, null, 2))
   } finally { await browser.close() }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1 })

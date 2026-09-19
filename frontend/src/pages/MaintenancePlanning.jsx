@@ -6,6 +6,7 @@ import { Badge, Card, DataBoundary, MetricCard, PageHeader, Toast } from '../com
 import { Icon } from '../components/Icons'
 import { compareMaintenancePriority, maintenancePriorityCategory, matchesMaintenancePriorityFilter } from '../lib/maintenancePriority'
 import { findAvailableSlot, isCompatibleBay } from '../lib/maintenanceScheduling'
+import { withRescheduleOverlays } from '../lib/maintenanceRescheduleView'
 import { MaintenanceAssistant } from '../components/MaintenanceAssistant'
 
 const subscriptions = [
@@ -29,6 +30,8 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
   const [autoScheduledIds, setAutoScheduledIds] = useState(readAutoScheduledIds)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantPending, setAssistantPending] = useState(0)
+  const [reschedulePlan, setReschedulePlan] = useState(null)
+  const calendarBookings = useMemo(() => withRescheduleOverlays(state.data?.bookings || [], reschedulePlan), [state.data, reschedulePlan])
   const model = useMemo(() => buildMaintenanceModel(state.data, weekOffset), [state.data, weekOffset])
   const pendingAutoBookings = useMemo(() => (state.data?.bookings || []).filter((booking) => autoScheduledIds.includes(booking.id) && booking.status === 'proposed'), [state.data, autoScheduledIds])
   const visibleQueue = useMemo(() => model?.queue.filter((item) => matchesMaintenancePriorityFilter(item, priorityFilter)) || [], [model, priorityFilter])
@@ -218,7 +221,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
         <div className="maintenance-planning-grid">
           <Card title="Weekly depot schedule" className="schedule-card" action={<div className="schedule-header-tools"><div className="week-nav"><button className="icon-button" onClick={() => setWeekOffset((value) => value - 1)} aria-label="Previous week"><Icon name="arrow"/></button><span>{formatDate(model.days[0])} – {formatDate(model.days[6])}</span><button className="icon-button" onClick={() => setWeekOffset((value) => value + 1)} aria-label="Next week"><Icon name="chevron"/></button></div><div className="schedule-header-actions">{pendingAutoBookings.length ? <button className="button button-primary button-compact schedule-confirm-attention" disabled={saving} onClick={confirmAutoSchedule}><Icon name="check"/>{saving ? 'Confirming…' : `Confirm schedule (${pendingAutoBookings.length})`}</button> : <button className="button button-secondary button-compact" disabled={saving} onClick={autoSchedule}><Icon name="refresh"/>{saving ? 'Scheduling…' : 'Auto schedule'}</button>}<button className="button button-primary button-compact" disabled={saving} onClick={() => { setForm(emptyForm); setEditing(true) }}><Icon name="calendar"/>New booking</button></div></div>}>
             <div className="schedule-grid"><div className="schedule-label"/><>{model.days.map((day) => <div className="schedule-day" key={day}><span className="schedule-weekday">{weekdayLabel(day)}</span><strong>{formatDate(day)}</strong>{day === singaporeDate() && <span className="schedule-today-badge">Today</span>}</div>)}</>
-              {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={state.data.bookings} onEdit={editBooking}/>)}</div>
+              {state.data.bays.map((bay) => <ScheduleRow key={bay.bay_id} bay={bay} days={model.days} bookings={calendarBookings} onEdit={(booking) => booking ? editBooking(booking) : setAssistantOpen(true)}/>)}</div>
           </Card>
 
           <Card title="Priority LRVs" className="maintenance-priority-card-wrap" action={<select className="priority-filter" aria-label="Filter maintenance priority queue" value={priorityFilter} onChange={(event) => setPriorityFilter(event.target.value)}>
@@ -268,6 +271,7 @@ export function MaintenancePlanning({ reportUpdatedAt }) {
     </DataBoundary>
     <MaintenanceAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} onChanged={() => state.refresh(true)} onNotice={(message, tone) => setToast({ message, tone })} onProposal={(batch, plan, navigate) => {
       setAssistantPending(batch?.booking_ids?.length || 0)
+      setReschedulePlan(batch && plan?.kind === 'reschedule' ? plan : null)
       if (batch && navigate && plan?.bookings?.length) {
         const starts = plan.bookings.map((booking) => booking.startAt || booking.start_at).filter(Boolean).sort()
         if (starts.length) setWeekOffset(calendarWeekOffset(starts[0]))
@@ -322,7 +326,7 @@ function weekdayLabel(value) {
   return new Intl.DateTimeFormat('en-SG', { timeZone: 'Asia/Singapore', weekday: 'long' }).format(new Date(`${value}T00:00:00+08:00`))
 }
 
-function ScheduleRow({ bay, days, bookings, onEdit }) {
+export function ScheduleRow({ bay, days, bookings, onEdit }) {
   const layout = layoutScheduleBookings(bookings, bay.bay_id, days)
   const lanes = Math.max(1, ...layout.map((item) => item.lane + 1))
   const lanePitch = Math.min(50, Math.max(30, Math.floor(250 / lanes)))
@@ -332,8 +336,8 @@ function ScheduleRow({ bay, days, bookings, onEdit }) {
       const left = (startDay / days.length) * 100
       const width = ((endDay - startDay) / days.length) * 100
       return <div className={`schedule-booking booking-${booking.status}`} key={booking.id} style={{ left: `calc(${left}% + 4px)`, width: `calc(${width}% - 8px)`, top: 4 + lane * lanePitch, height: lanePitch - 6 }}>
-        <button disabled={!['proposed', 'confirmed'].includes(booking.status)} onClick={() => onEdit(booking)}>
-          <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {bookingWorkLabel(booking)}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
+        <button disabled={!['proposed', 'confirmed'].includes(booking.status)} aria-label={booking.rescheduleOverlay ? `Review proposed move for ${vehicleLabel(booking.lrv_id)}` : undefined} onClick={() => onEdit(booking.rescheduleOverlay ? null : booking)}>
+          <span className="booking-copy"><strong>{vehicleLabel(booking.lrv_id)} · {bookingWorkLabel(booking)}{booking.rescheduleOverlay ? ' · Proposed move' : ''}</strong><small>{bookingRangeLabel(booking, continuesBefore, continuesAfter)}</small></span>
         </button>
       </div>
     })}

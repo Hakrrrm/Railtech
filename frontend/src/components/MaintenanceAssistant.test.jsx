@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { ScheduleRow } from '../pages/MaintenancePlanning'
+import { withRescheduleOverlays } from '../lib/maintenanceRescheduleView'
 import { AssistantPlan, MaintenanceAssistant } from './MaintenanceAssistant'
 
 describe('maintenance assistant operator review', () => {
@@ -28,5 +30,30 @@ describe('maintenance assistant operator review', () => {
     expect(html).toContain('GPT-4.1 mini')
     expect(html).toContain('confirm bookings separately')
     expect(html).toContain('Close maintenance assistant')
+  })
+})
+
+describe('reschedule review', () => {
+  const original = { id: 'existing-booking', status: 'confirmed', lrv_id: 'D24', bay_id: 'B1', start_at: '2026-09-21T05:00:00Z', end_at: '2026-09-21T09:00:00Z', primary_cycle: 13000 }
+  const plan = { kind: 'reschedule', bookings: [{ bookingId: original.id, lrvId: 'D24', bayId: 'B2', startAt: original.start_at, endAt: original.end_at, primaryCycle: 13000, original: { id: original.id, bayId: 'B1', startAt: original.start_at, endAt: original.end_at } }] }
+  it('preserves the green original and adds a distinct blue preview without mutating data', () => {
+    const rows = withRescheduleOverlays([original], plan)
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toBe(original)
+    expect(rows[0].bay_id).toBe('B1')
+    expect(rows[1]).toMatchObject({ status: 'proposed', bay_id: 'B2', rescheduleOverlay: true })
+    expect(rows[1].id).not.toBe(original.id)
+    expect(withRescheduleOverlays([original], null)).toEqual([original])
+    expect(withRescheduleOverlays([{ ...original, status: 'cancelled' }], plan)).toHaveLength(1)
+  })
+  it('labels original and proposed locations in review and the calendar', () => {
+    const review = renderToStaticMarkup(<AssistantPlan batch={{ status: 'proposed' }} plan={plan}/>)
+    expect(review).toContain('Proposed reschedule')
+    expect(review).toContain('From B1')
+    expect(review).toContain('To B2')
+    const calendar = renderToStaticMarkup(<ScheduleRow bay={{ bay_id: 'B2', name: 'Bay 2', opens_at: '06:00', closes_at: '23:00' }} days={['2026-09-21']} bookings={withRescheduleOverlays([original], plan)} onEdit={() => {}}/>)
+    expect(calendar).toContain('booking-proposed')
+    expect(calendar).toContain('Proposed move')
+    expect(calendar).toContain('Review proposed move for V24')
   })
 })

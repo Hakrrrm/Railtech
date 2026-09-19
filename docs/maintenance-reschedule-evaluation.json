@@ -1,0 +1,17 @@
+{
+  "evaluatedAt": "2026-09-19",
+  "model": "gpt-4.1-mini",
+  "completed": 1,
+  "blocked": "Existing assistant daily usage limit prevented further live model requests. No cap was changed.",
+  "bookingsUnchanged": true,
+  "results": [
+    {
+      "message": "Preview rescheduling V23 and V24 to SPLRT-BAY-2. Keep their original dates and times. Do not add bookings.",
+      "kind": "reschedule",
+      "count": 2,
+      "wordCount": 62,
+      "passed": true,
+      "observation": "Live model correctly selected reschedule tooling for V23 06:00-12:00 and V24 13:00-17:00 on 21 September. Subsequent refinement returns deterministic short preview text instead of additional model narration; validated in unit tests."
+    }
+  ]
+}

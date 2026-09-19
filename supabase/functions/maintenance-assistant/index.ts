@@ -56,7 +56,7 @@ Deno.serve(async request => {
       const batch = await checked(db.rpc('assistant_apply_proposal', { p_session_id: session.id, p_batch_id: body.batchId, p_action: action }))
       mutationCommitted = true
       await recordReply(session.id, body.requestId,
-        action === 'confirm' ? `${batch.booking_ids.length} bookings confirmed. The slots are now green.` : 'The proposal has been discarded. Its unconfirmed slots have been released.',
+        action === 'confirm' ? `${batch.booking_ids.length} bookings ${batch.metadata?.kind === 'reschedule' ? 'rescheduled' : 'confirmed'}. The slots are now green.` : batch.metadata?.kind === 'reschedule' ? 'Proposed moves discarded. Original bookings are unchanged.' : 'Proposal discarded. Unconfirmed slots released.',
         { plan: batch.metadata?.plan, batchId: batch.id })
       return json({ ...await state(session.id), batch })
     }
@@ -88,8 +88,8 @@ Deno.serve(async request => {
       loadData: () => loadFleet(session.fleet),
       saveProposal: async (plan: any, constraints: any) => {
         if (Date.now() >= deadline) throw new Error('The planning request timed out before adding bookings. Please retry.')
-        const batch = await checked(db.rpc('assistant_store_proposal', { p_session_id: session.id, p_request_id: body.requestId,
-          p_bookings: plan.bookings, p_metadata: { plan, constraints } }))
+        const batch = await checked(db.rpc(plan.kind === 'reschedule' ? 'assistant_store_reschedule' : 'assistant_store_proposal', { p_session_id: session.id, p_request_id: body.requestId,
+          p_bookings: plan.bookings, p_metadata: { plan, constraints, ...(plan.kind === 'reschedule' ? { kind: 'reschedule' } : {}) } }))
         mutationCommitted = true
         return batch
       },

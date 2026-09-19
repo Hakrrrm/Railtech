@@ -27,6 +27,14 @@ Planning respects the due day or earliest feasible later day, balances compatibl
 
 Supported preferences: selected/excluded LRVs, bay selection, start-date window, 1–42 day horizon, at most 12 bookings, due-first/faults-first/short-jobs-first priority. Short-jobs-first breaks ties within the same urgency/due day; it does not move a future routine job ahead of urgent work. Date windows constrain booking starts; long packages can finish later. Unsupported constraints such as staffing/parts should prompt clarification. This is a bounded planning assistant, not an unconstrained optimizer.
 
+## Rescheduling confirmed bookings
+
+Ask "Reschedule V23 and V24 to Bay 2" to prepare moves for existing future confirmed work. The booked scope, duration, fault and notes are preserved. Dates and times default to the originals; explicit dates/times are respected. The rescheduling window is independently bounded to 42 days, so an earlier one-day new-booking preference does not reject a later move.
+
+Blue proposed moves overlay the calendar while original bookings remain green and reserved. **Confirm reschedule** atomically moves the same booking records after checking their original versions and operational constraints again. **Discard proposal**, expiry or a failed validation leaves originals untouched. Changes to any selected booking invalidate the whole proposal; refresh and prepare another. Started/completed jobs cannot move. Rescheduling previews do not reserve destination bays, so another operator taking a destination can prevent confirmation.
+
+The deterministic implementation is `supabase/functions/_shared/assistantRescheduling.js`; migration `202609190004` adds service-only proposal and atomic rescheduling RPCs. Replies normally use 2-4 sentences or up to three short bullets, avoid repeating earlier summaries, and report planning errors directly.
+
 ## Setup and deployment
 
 From PowerShell, the helper script works from any directory:
@@ -55,7 +63,7 @@ The function has gateway JWT verification disabled to support Supabase publishab
 ## Limits, lifecycle and costs
 
 - Messages: 2,000 characters. Model context: last 12 bounded messages plus durable last validated planning preferences and current structured facts.
-- Provider calls: at most four rounds, six tool calls and 1,100 generated tokens per round; 20-second timeout per provider call within a 65-second planning deadline. Database requests have eight-second timeouts. Only one chat turn per session can run at a time.
+- Provider calls: at most four rounds, six tool calls and 650 generated tokens per round; 20-second timeout per provider call within a 65-second planning deadline. Database requests have eight-second timeouts. Only one chat turn per session can run at a time.
 - SQL-enforced usage caps: 30 turns/session/hour, 60 turns/actor/day and 200 turns globally/day. Failed provider attempts count. Demo actor tracking uses a hashed request address as an abuse heuristic; the global cap is the reliable final budget bound.
 - Session creation: 20/actor/day, 300/global/day. Sessions expire after 24 hours. Proposals expire after two hours; a five-minute database cron releases abandoned draft reservations. Confirmed slots are never expired.
 - Housekeeping deletes conversations seven days after session expiry and audit entries after 30 days. The demo reset also clears demo assistant conversations/drafts. Audit records contain tool names/constraints and token usage; no API keys or raw IP addresses.
@@ -74,6 +82,7 @@ npx --yes deno check ../supabase/functions/maintenance-assistant/index.ts
 cd ..
 npx supabase@latest db query --linked --file supabase/tests/maintenance_assistant.sql
 npx supabase@latest db query --linked --file supabase/tests/maintenance_assistant_atomic.sql
+npx supabase@latest db query --linked --file supabase/tests/maintenance_assistant_reschedule.sql
 node scripts/test-maintenance-assistant-http.mjs
 node scripts/test-maintenance-assistant-browser.cjs
 node scripts/evaluate-maintenance-assistant.mjs
@@ -88,3 +97,5 @@ Known limits: no staff/parts inventory, no autonomous repairs, no persisted cros
 ### Verified release
 
 On 19 September 2026: 123 unit tests, 12 isolated browser flows, 17 deployed HTTP boundary checks, both transactional SQL regression suites, and the final 10 live-model cases passed. A separate real-browser smoke check verified Vite → Supabase → GPT-4.1 mini → visible fleet reply. Build, lint and Deno type checks passed. Live evaluation booking rows were unchanged. Earlier evaluations caught timezone, bay-capability and skipped-preview errors; explicit local-time facts, calculated availability windows and required action tools address those regressions.
+
+Rescheduling follow-up: 142 unit tests, 15 isolated browser flows and all three SQL rollback suites passed. The live model successfully previewed the V23/V24 move to Bay 2 on 21 September. Further live-model requests reached the existing daily cap; it was not raised. Preview and proposal summaries now use concise deterministic text. See `maintenance-reschedule-evaluation.json`.

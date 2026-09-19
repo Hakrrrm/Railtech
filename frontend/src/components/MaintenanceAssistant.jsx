@@ -28,6 +28,7 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
   const conversation = useRef(null)
   const requestInFlight = useRef(false)
   const active = batch?.status === 'proposed'
+  const rescheduling = plan?.kind === 'reschedule' || batch?.metadata?.kind === 'reschedule'
 
   useEffect(() => {
     sessionRef.current = session
@@ -51,8 +52,8 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
       if (input.action === 'chat') setDraft('')
       callbacks.current.onProposal?.(response.batch?.status === 'proposed' ? response.batch : null, response.plan, input.action === 'chat')
       if (response.batch || ['confirm', 'discard'].includes(input.action)) await callbacks.current.onChanged?.()
-      if (input.action === 'confirm') callbacks.current.onNotice?.('AI proposal confirmed. The bookings are now green.', 'success')
-      if (input.action === 'discard') callbacks.current.onNotice?.('AI proposal discarded. The LRVs are available for planning again.', 'success')
+      if (input.action === 'confirm') callbacks.current.onNotice?.((response.plan?.kind === 'reschedule' || rescheduling) ? 'Reschedule confirmed. The bookings have moved and are green.' : 'AI proposal confirmed. The bookings are now green.', 'success')
+      if (input.action === 'discard') callbacks.current.onNotice?.((response.plan?.kind === 'reschedule' || rescheduling) ? 'Reschedule discarded. Original bookings are unchanged.' : 'AI proposal discarded. The LRVs are available for planning again.', 'success')
     } catch (problem) {
       setError(problem.message)
       if (problem.definitive) { setRetry(null); setRestored(true) }
@@ -141,7 +142,7 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
         {previewPlan && <AssistantPlan plan={previewPlan}/>}
         {plan && <AssistantPlan plan={plan} batch={batch}/>}
       </div>
-      {active && <div className="maintenance-assistant-confirm"><p><strong>{batch.booking_ids?.length || plan?.bookings?.length || 0} proposed booking(s)</strong><span>Shown in blue. Confirm to commit the schedule.</span>{batch.expires_at && <small>Review by {formatDateTime(batch.expires_at)} SGT</small>}</p><div><button className="button button-secondary" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'discard', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}>Discard proposal</button><button className="button button-primary schedule-confirm-attention" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'confirm', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}><Icon name="check"/>Confirm schedule</button></div></div>}
+      {active && <div className="maintenance-assistant-confirm"><p><strong>{batch.booking_ids?.length || plan?.bookings?.length || 0} {rescheduling ? 'proposed move(s)' : 'proposed booking(s)'}</strong><span>{rescheduling ? 'Blue shows proposed moves. Original bookings stay green until confirmed.' : 'Shown in blue. Confirm to commit the schedule.'}</span>{batch.expires_at && <small>Review by {formatDateTime(batch.expires_at)} SGT</small>}</p><div><button className="button button-secondary" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'discard', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}>Discard proposal</button><button className="button button-primary schedule-confirm-attention" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'confirm', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}><Icon name="check"/>{rescheduling ? 'Confirm reschedule' : 'Confirm schedule'}</button></div></div>}
       {error && <div className="maintenance-assistant-error" role="alert"><p>{error}</p>{retry && <button disabled={busy} onClick={() => run(retry)}>Retry request</button>}</div>}
       <form className="maintenance-assistant-compose" onSubmit={(event) => { event.preventDefault(); send() }}>
         <label htmlFor="maintenance-assistant-message">Ask about this fleet or request a proposal</label>
@@ -156,9 +157,10 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
 export function AssistantPlan({ plan, batch }) {
   const bookings = plan.bookings || []
   const status = batch?.status || 'preview'
-  return <section className="maintenance-assistant-plan" aria-label="Scheduling proposal"><h3>{status === 'confirmed' ? 'Confirmed schedule' : status === 'proposed' ? 'Proposed schedule' : status === 'discarded' || status === 'cancelled' ? 'Discarded proposal' : status === 'expired' ? 'Expired proposal' : 'Schedule preview'}</h3>
+  const moving = plan.kind === 'reschedule' || batch?.metadata?.kind === 'reschedule'
+  return <section className="maintenance-assistant-plan" aria-label="Scheduling proposal"><h3>{status === 'confirmed' ? (moving ? 'Confirmed reschedule' : 'Confirmed schedule') : status === 'proposed' ? (moving ? 'Proposed reschedule' : 'Proposed schedule') : status === 'discarded' || status === 'cancelled' ? 'Discarded proposal' : status === 'expired' ? 'Expired proposal' : 'Schedule preview'}</h3>
     <p>{bookings.length} booking{bookings.length === 1 ? '' : 's'} · All times SGT</p>
-    {bookings.map((booking, index) => <div className="maintenance-assistant-plan-booking" key={booking.id || index}><strong>{vehicleLabel(booking.lrvId || booking.lrv_id)} · {(booking.workType || booking.work_type) === 'corrective' ? 'Fault repair' : cycleLabel(booking.primaryCycle || booking.primary_cycle)}</strong><span>{booking.bayName || booking.bayId || booking.bay_id}</span><small>{formatDateTime(booking.startAt || booking.start_at)} – {formatDateTime(booking.endAt || booking.end_at)}</small></div>)}
+    {bookings.map((booking, index) => <div className="maintenance-assistant-plan-booking" key={booking.id || index}><strong>{vehicleLabel(booking.lrvId || booking.lrv_id)} · {(booking.workType || booking.work_type) === 'corrective' ? 'Fault repair' : cycleLabel(booking.primaryCycle || booking.primary_cycle)}</strong>{moving && booking.original && <small>From {booking.original.bayName || booking.original.bayId} / {formatDateTime(booking.original.startAt)} - {formatDateTime(booking.original.endAt)}</small>}<span>{moving ? 'To ' : ''}{booking.bayName || booking.bayId || booking.bay_id}</span><small>{formatDateTime(booking.startAt || booking.start_at)} – {formatDateTime(booking.endAt || booking.end_at)}</small></div>)}
     {!!plan.skipped?.length && <div className="maintenance-assistant-plan-notes"><strong>Not scheduled</strong>{plan.skipped.map((item, index) => <p key={index}>{typeof item === 'string' ? item : `${vehicleLabel(item.lrvId || item.lrv_id)}: ${item.reason || 'No suitable slot found.'}`}</p>)}</div>}
     {!!plan.warnings?.length && <div className="maintenance-assistant-plan-notes"><strong>Planning notes</strong>{plan.warnings.map((warning, index) => <p key={index}>{typeof warning === 'string' ? warning : warning.message || warning.reason}</p>)}</div>}
   </section>
