@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { bayClearanceReply, validateSourceBay } from '../../../supabase/functions/_shared/assistantBayScope'
+import { bayClearanceReply, validateSourceBay, planningDate } from '../../../supabase/functions/_shared/assistantBayScope'
 import { runAssistantTurn } from '../../../supabase/functions/_shared/assistantAgent'
 const now = new Date('2026-09-19T13:00:00+08:00')
 const data = { vehicles: ['D12', 'D30'].map(lrv_id => ({ lrv_id, status: 'in_service', fleet: 'splrt' })), rules: [{ cycle_type: 2000, duration_minutes: 120, compatible_bay_type: 'routine' }], settings: { minimum_service_vehicles: 0 }, forecasts: [], bays: [{ bay_id: 'SPLRT-BAY-1', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }, { bay_id: 'SPLRT-BAY-2', active: true, bay_type: 'universal', opens_at: '06:00', closes_at: '23:00' }], bookings: [
@@ -59,4 +59,31 @@ it('keeps a preview acceptance read-only', async () => {
     history: [{ role: 'assistant', content: 'Would you like me to explore alternative slots?' }], planningPreferences: { sourceScope: { bayId: 'SPLRT-BAY-2', date: '2026-09-19' } } })
   expect(result.plan.bookings).toHaveLength(1)
   expect(saveProposal).not.toHaveBeenCalled()
+})
+
+
+describe('bay clearance date conversations', () => {
+  it.each(['21 sept', '21 September', '21st Sep 2026', '2026-09-21'])('understands %s', text => {
+    expect(planningDate(text, now)).toBe('2026-09-21')
+  })
+  it('rejects impossible dates', () => {
+    expect(planningDate('31 Sept', now)).toBeNull()
+    expect(planningDate('2026-02-30', now)).toBeNull()
+  })
+  const future = { ...data, bookings: data.bookings.map(b => ({ ...b, work_type: 'preventive', primary_cycle: 2000, start_at: b.start_at.replace('09-19','09-21'), end_at: b.end_at.replace('09-19','09-21') })) }
+  it('handles the exact screenshot request without asking for its date again', async () => {
+    const result = await runAssistantTurn({ message: 'i need to clear bay 1 on 21 sept where can i reschedule to?', now, loadData: async () => future, provider: vi.fn(), saveProposal: vi.fn() })
+    expect(result.plan.bookings.map(b => b.bookingId)).toEqual(['a'])
+    expect(result.plan.bookings[0].bayId).toBe('SPLRT-BAY-2')
+    expect(result.planningPreferences.sourceScope.date).toBe('2026-09-21')
+  })
+  it('retains a bay while asking for its missing date, then handles a date-only reply', async () => {
+    const args = { now, loadData: async () => future, provider: vi.fn(), saveProposal: vi.fn() }
+    const first = await runAssistantTurn({ ...args, message: 'clear bay 1' })
+    expect(first.planningPreferences.pendingSourceScope.bayId).toBe('SPLRT-BAY-1')
+    const result = await runAssistantTurn({ ...args, message: '21 sept', planningPreferences: first.planningPreferences,
+      history: [{ role: 'user', content: 'clear bay 1' }, { role: 'assistant', content: first.text }] })
+    expect(result.plan.bookings.map(b => b.bookingId)).toEqual(['a'])
+    expect(args.saveProposal).not.toHaveBeenCalled()
+  })
 })
