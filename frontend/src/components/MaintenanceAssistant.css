@@ -47,3 +47,14 @@
 @keyframes assistant-pulse { 50% { opacity: .25; } }
 @media (max-height: 650px) { .maintenance-assistant-header { padding: 12px 18px; } .maintenance-assistant-header p { display: none; } .maintenance-assistant-header h2 { font-size: 18px; } .maintenance-assistant-confirm { padding: 9px 16px; } .maintenance-assistant-compose { padding: 10px 16px; } }
 @media (prefers-reduced-motion: reduce) { .maintenance-assistant-working span { animation: none; } }
+
+.maintenance-assistant-plan-booking { display: flex; flex-direction: column; gap: 12px; padding: 16px 0; }
+.assistant-slot-comparison { display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr); gap: 10px; align-items: center; }
+.assistant-slot { display: flex; flex-direction: column; gap: 6px; padding: 14px; border: 1px solid #d5e0e9; border-radius: 8px; background: white; }
+.assistant-slot-label { font-size: 11px; color: #57728b; }
+.assistant-slot strong, .assistant-slot b { font-size: 15px; line-height: 1.4; }
+.assistant-slot-proposed { border-color: #77c9df; background: #e4f6ff; }
+.assistant-slot-arrow { color: #00849a; font-size: 22px; }
+.assistant-slot:only-child { grid-column: 1 / -1; }
+.maintenance-assistant-plan > .maintenance-assistant-confirm { margin-top: 16px; padding: 16px 0 0; background: transparent; }
+@media (max-width: 480px) { .assistant-slot-comparison { grid-template-columns: 1fr; } .assistant-slot-arrow { justify-self: center; transform: rotate(90deg); } }

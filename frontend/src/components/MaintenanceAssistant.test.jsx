@@ -49,8 +49,10 @@ describe('reschedule review', () => {
   it('labels original and proposed locations in review and the calendar', () => {
     const review = renderToStaticMarkup(<AssistantPlan batch={{ status: 'proposed' }} plan={plan}/>)
     expect(review).toContain('Proposed reschedule')
-    expect(review).toContain('From B1')
-    expect(review).toContain('To B2')
+    expect(review).toContain('Currently booked')
+    expect(review).toContain('B1')
+    expect(review).toContain('Move to')
+    expect(review).toContain('B2')
     const calendar = renderToStaticMarkup(<ScheduleRow bay={{ bay_id: 'B2', name: 'Bay 2', opens_at: '06:00', closes_at: '23:00' }} days={['2026-09-21']} bookings={withRescheduleOverlays([original], plan)} onEdit={() => {}}/>)
     expect(calendar).toContain('booking-proposed')
     expect(calendar).toContain('Proposed move')

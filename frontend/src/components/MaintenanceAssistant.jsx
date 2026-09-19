@@ -146,9 +146,9 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
         {messages.map((message, index) => <article className={`maintenance-assistant-message maintenance-assistant-message-${message.role}`} key={message.id || index}><strong>{message.role === 'user' ? 'You' : 'Maintenance assistant'}</strong><p>{message.content}</p></article>)}
         {busy && <p className="maintenance-assistant-working" role="status"><span/>Checking the current plan…</p>}
         {previewPlan && <AssistantPlan plan={previewPlan}/>}
-        {plan && <AssistantPlan plan={plan} batch={batch}/>}
+        {plan && <AssistantPlan plan={plan} batch={batch}>{active && <div className="maintenance-assistant-confirm"><p><strong>{batch.booking_ids?.length || plan?.bookings?.length || 0} {rescheduling ? 'proposed move(s)' : 'proposed booking(s)'}</strong><span>{rescheduling ? 'Blue shows proposed moves. Original bookings stay green until confirmed.' : 'Shown in blue. Confirm to commit the schedule.'}</span>{batch.expires_at && <small>Review by {formatDateTime(batch.expires_at)} SGT</small>}</p><div><button className="button button-secondary" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'discard', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}>Discard proposal</button><button className="button button-primary schedule-confirm-attention" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'confirm', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}><Icon name="check"/>{rescheduling ? 'Confirm reschedule' : 'Confirm schedule'}</button></div></div>}</AssistantPlan>}
       </div>
-      {active && <div className="maintenance-assistant-confirm"><p><strong>{batch.booking_ids?.length || plan?.bookings?.length || 0} {rescheduling ? 'proposed move(s)' : 'proposed booking(s)'}</strong><span>{rescheduling ? 'Blue shows proposed moves. Original bookings stay green until confirmed.' : 'Shown in blue. Confirm to commit the schedule.'}</span>{batch.expires_at && <small>Review by {formatDateTime(batch.expires_at)} SGT</small>}</p><div><button className="button button-secondary" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'discard', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}>Discard proposal</button><button className="button button-primary schedule-confirm-attention" disabled={busy || Boolean(retry)} onClick={() => run({ action: 'confirm', ...session, batchId: batch.id, requestId: crypto.randomUUID() })}><Icon name="check"/>{rescheduling ? 'Confirm reschedule' : 'Confirm schedule'}</button></div></div>}
+
       {error && <div className="maintenance-assistant-error" role="alert"><p>{error}</p>{retry && <button disabled={busy} onClick={() => run(retry)}>Retry request</button>}</div>}
       <form className="maintenance-assistant-compose" onSubmit={(event) => { event.preventDefault(); send() }}>
         <label htmlFor="maintenance-assistant-message">Ask about this fleet or request a proposal</label>
@@ -160,14 +160,36 @@ export function MaintenanceAssistant({ open, onClose, onChanged, onProposal, onN
   return typeof document === 'undefined' ? content : createPortal(content, document.body)
 }
 
-export function AssistantPlan({ plan, batch }) {
+export function AssistantPlan({ plan, batch, children }) {
   const bookings = plan.bookings || []
   const status = batch?.status || 'preview'
   const moving = plan.kind === 'reschedule' || batch?.metadata?.kind === 'reschedule'
   return <section className="maintenance-assistant-plan" aria-label="Scheduling proposal"><h3>{status === 'confirmed' ? (moving ? 'Confirmed reschedule' : 'Confirmed schedule') : status === 'proposed' ? (moving ? 'Proposed reschedule' : 'Proposed schedule') : status === 'discarded' || status === 'cancelled' ? 'Discarded proposal' : status === 'expired' ? 'Expired proposal' : 'Schedule preview'}</h3>
     <p>{bookings.length} booking{bookings.length === 1 ? '' : 's'} · All times SGT</p>
-    {bookings.map((booking, index) => <div className="maintenance-assistant-plan-booking" key={booking.id || index}><strong>{vehicleLabel(booking.lrvId || booking.lrv_id)} · {(booking.workType || booking.work_type) === 'corrective' ? 'Fault repair' : cycleLabel(booking.primaryCycle || booking.primary_cycle)}</strong>{moving && booking.original && <small>From {booking.original.bayName || booking.original.bayId} / {formatDateTime(booking.original.startAt)} - {formatDateTime(booking.original.endAt)}</small>}<span>{moving ? 'To ' : ''}{booking.bayName || booking.bayId || booking.bay_id}</span><small>{formatDateTime(booking.startAt || booking.start_at)} – {formatDateTime(booking.endAt || booking.end_at)}</small></div>)}
+    {bookings.map((booking, index) => <div className="maintenance-assistant-plan-booking" key={booking.id || index}>
+      <strong>{vehicleLabel(booking.lrvId || booking.lrv_id)} · {(booking.workType || booking.work_type) === 'corrective' ? 'Fault repair' : cycleLabel(booking.primaryCycle || booking.primary_cycle)}</strong>
+      <div className="assistant-slot-comparison">
+        {moving && booking.original && <PlanSlot label="Currently booked" bay={booking.original.bayName || booking.original.bayId} start={booking.original.startAt} end={booking.original.endAt}/>}
+        {moving && booking.original && <span className="assistant-slot-arrow" aria-hidden="true">&rarr;</span>}
+        <PlanSlot label={moving ? 'Move to' : 'Proposed slot'} bay={booking.bayName || booking.bayId || booking.bay_id} start={booking.startAt || booking.start_at} end={booking.endAt || booking.end_at} proposed/>
+      </div>
+    </div>)}
     {!!plan.skipped?.length && <div className="maintenance-assistant-plan-notes"><strong>Not scheduled</strong>{plan.skipped.map((item, index) => <p key={index}>{typeof item === 'string' ? item : `${vehicleLabel(item.lrvId || item.lrv_id)}: ${item.reason || 'No suitable slot found.'}`}</p>)}</div>}
     {!!plan.warnings?.length && <div className="maintenance-assistant-plan-notes"><strong>Planning notes</strong>{plan.warnings.map((warning, index) => <p key={index}>{typeof warning === 'string' ? warning : warning.message || warning.reason}</p>)}</div>}
+    {children}
   </section>
+}
+
+function PlanSlot({ label, bay, start, end, proposed }) {
+  const startDate = new Date(start), endDate = new Date(end)
+  const date = value => value.toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Singapore' })
+  const time = value => value.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Singapore' })
+  const sameDay = date(startDate) === date(endDate)
+  const bayLabel = String(bay || '').replace(/^SPLRT-BAY-(\d+)$/i, 'Bay $1')
+  return <div className={`assistant-slot ${proposed ? 'assistant-slot-proposed' : ''}`}>
+    <span className="assistant-slot-label">{label}</span>
+    <strong>{date(startDate)}</strong>
+    <b>{sameDay ? `${time(startDate)} – ${time(endDate)}` : `${time(startDate)} → ${date(endDate)}, ${time(endDate)}`}</b>
+    <span>{bayLabel}</span>
+  </div>
 }
