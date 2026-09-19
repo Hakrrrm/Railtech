@@ -62,7 +62,7 @@ export function FleetOverview({ navigate, reportUpdatedAt }) {
   </div>
 }
 
-function buildModel(data) {
+export function buildModel(data) {
   if (!data) return null
   const forecastsByVehicle = new Map()
   data.forecasts.forEach((cycle) => {
@@ -79,8 +79,9 @@ function buildModel(data) {
     return { ...row, displayForecastDays: row.forecast_days, displayStatus: row.status === 'maintenance' || row.currentBooking ? 'maintenance' : row.status }
   })
   const staleAfterHours = Number(data.settings?.stale_telemetry_hours || 12)
+  const confirmedVehicles = new Set(data.bookings.filter(booking => booking.status === 'confirmed').map(booking => booking.lrv_id))
   const priority = combined
-    .filter((row) => row.displayStatus !== 'maintenance')
+    .filter((row) => row.displayStatus !== 'maintenance' && !confirmedVehicles.has(row.lrv_id))
     .map((row) => ({ ...row, priorityCategory: maintenancePriorityCategory(row), reason: reasonFor(row, staleAfterHours) }))
     .filter((row) => row.priorityCategory)
     .sort(compareMaintenancePriority)
@@ -92,7 +93,9 @@ function buildModel(data) {
     week: dueSoon.length,
   }
   const leading = priority[0] || {}
-  const next = leading.status === 'faulty'
+  const next = !priority.length
+    ? { title: 'No unbooked priority work', description: 'Priority maintenance is booked or no urgent work is due.', reason: 'Review the calendar for upcoming visits and workshop capacity.', button: 'Open maintenance plan', destination: 'maintenance' }
+    : leading.status === 'faulty'
     ? { status: 'faulty', title: `Replace ${vehicleLabel(leading.lrv_id)} at the next handover`, description: leading.reason, reason: 'A controlled stock change keeps the service slot covered while the faulty LRV returns to depot.', button: 'Open deployment plan', destination: 'deployment' }
     : leading.status === 'maintenance' || leading.currentBooking
       ? { title: `Complete the maintenance record for ${leading.lrv_id ? vehicleLabel(leading.lrv_id) : 'the current visit'}`, description: `${cycleLabel(leading.cycle_type)} work is under way or awaiting technician confirmation.`, reason: 'The cycle remains overdue until the technician records what was completed and the mileage at completion.', button: 'Open maintenance plan', destination: 'maintenance' }

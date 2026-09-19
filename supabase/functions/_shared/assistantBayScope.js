@@ -1,0 +1,32 @@
+// Resolve source-bay requests from authoritative booking rows, not LLM selection.
+export function bayClearanceReply(message, data, now) {
+  const match = message.match(/\b(?:clear|empty|vacate|free(?: up)?)\s+(?:out\s+)?bay[ -]*(\d+)\b/i)
+  if (!match) return null
+  const bays = (data.bays || []).filter(bay => new RegExp(`(?:^|[- ])(?:bay[- ]*)?0*${Number(match[1])}$`, 'i').test(bay.bay_id) || new RegExp(`^Bay\\s+0*${Number(match[1])}\\b`, 'i').test(bay.name || ''))
+  if (bays.length !== 1) return { text: 'Which configured bay do you want to clear?', scope: null }
+  const today = new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10)
+  const tomorrow = new Date(now.getTime() + 32 * 3600000).toISOString().slice(0, 10)
+  const date = message.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] || (/\btomorrow\b/i.test(message) ? tomorrow : /\btoday\b/i.test(message) ? today : null)
+  if (!date || !Number.isFinite(Date.parse(`${date}T00:00:00+08:00`))) return { text: 'Which date should this bay be cleared for?', scope: null }
+  const bayId = bays[0].bay_id
+  const rows = sourceBayBookings(data, { bayId, date })
+  const title = `Bay ${Number(match[1])} on ${date}`
+  if (!rows.length) return { text: `${title} has no active maintenance bookings to move.`, scope: null }
+  const text = rows.map(b => {
+    const label = b.work_type === 'corrective' ? 'Corrective repair' : `${Number(b.primary_cycle) / 1000}K maintenance`
+    const local = value => new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0, 16).replace('T', ' ')
+    return `• ${b.lrv_id.replace(/^D/, 'V')} · ${label} · ${local(b.start_at)}–${local(b.end_at)}${b.status === 'proposed' ? ' (draft)' : Date.parse(b.start_at) <= now.getTime() ? ' (already started; cannot reschedule)' : ''}`
+  }).join('\n')
+  return { text: `${title}:\n${text}\n\nI can preview moves for the future confirmed bookings; work already started needs operator review.`, scope: { bayId, date } }
+}
+
+export function sourceBayBookings(data, scope) {
+  const start = Date.parse(`${scope.date}T00:00:00+08:00`)
+  return (data.bookings || []).filter(b => b.bay_id === scope.bayId && ['confirmed', 'proposed'].includes(b.status) && Date.parse(b.start_at) < start + 86400000 && Date.parse(b.end_at) > start)
+    .sort((a, b) => Date.parse(a.start_at) - Date.parse(b.start_at))
+}
+
+export function validateSourceBay(data, args, scope) {
+  const rows = sourceBayBookings(data, scope)
+  if (args.vehicleIds.some(id => !rows.some(b => [b.lrv_id, b.lrv_id.replace(/^D/, 'V')].includes(id.toUpperCase())))) throw new Error('The selected LRVs are not all booked in the source bay on that date. Refresh the bay schedule before proposing moves.')
+}

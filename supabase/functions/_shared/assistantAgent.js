@@ -1,3 +1,4 @@
+import { bayClearanceReply, validateSourceBay } from './assistantBayScope.js'
 import { buildReschedulePlan, rescheduleSchema } from './assistantRescheduling.js'
 import { buildFleetContext, buildAssistantPlan, buildBayAvailability, validateConstraints, constraintsSchema } from './assistantPlanner.js'
 
@@ -45,6 +46,7 @@ export function hasSchedulingIntent(message, history = []) {
   if (/\b(don['’]?t|do not|never|without|avoid|not yet|not now|what if|hypothetical|preview|simulate|compare|explain|show me|tell me)\b/.test(text)) return false
   if (/^(yes|yes please|go ahead|go ahead please|proceed|do it)[.!\s]*$/.test(text)) {
     const previous = history.filter(m => m.role === 'assistant').at(-1)?.content || ''
+    if (/\b(?:can|could|shall|would you like[^.?!]*)\s+(?:me to\s+)?preview\b/i.test(previous)) return false
     return /\b(proposals?|propose|reschedul(?:e|ing)|schedul(?:e|ing)|bookings?|plan|moves?)\b/i.test(previous)
   }
   if (/\b(confirm|cancel|delete|complete|reset|ignore|override|bypass)\b/.test(text)) return false
@@ -79,15 +81,20 @@ export async function runAssistantTurn({ message, history = [], loadData, savePr
   const boundary = scopeReply(message, history)
   if (boundary) return { text: boundary, plan: null, batch: null, audit: [{ tool: 'scope_guard', outcome: 'redirected' }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences }
   const canPropose = hasSchedulingIntent(message, history) && !pendingBatch
-  const needsPreview = /^(please\s+)?preview\b|^(can|could|would) you (please )?preview\b/i.test(message.trim())
+  const previewAccepted = /^(yes|yes please|go ahead|proceed|do it)[.!\s]*$/i.test(message) && /\b(?:can|could|shall|would you like[^.?!]*)\s+(?:me to\s+)?preview\b/i.test(history.filter(m => m.role === 'assistant').at(-1)?.content || '')
+  const needsPreview = previewAccepted || /^(please\s+)?preview\b|^(can|could|would) you (please )?preview\b/i.test(message.trim())
   const tools = assistantTools(canPropose)
   const allowed = new Set(tools.map(t => t.name))
   let data = await loadData()
+  const bayReply = bayClearanceReply(message, data, now)
+  if (bayReply) return { text: bayReply.text, plan: null, batch: null, audit: [{ tool: 'source_bay_lookup', outcome: 'ok' }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences: bayReply.scope ? { sourceScope: bayReply.scope } : null }
+  const sourceScope = planningPreferences?.sourceScope && !/\b[VD]\d{1,3}\b/i.test(message) ? planningPreferences.sourceScope : null
   const context = buildFleetContext(data, now)
   const mentioned = [...message.matchAll(/\b[VD]\d{1,3}\b/gi)].map(m => m[0].toUpperCase())
   const unknown = mentioned.filter(id => !context.vehicles.some(v => v.lrvId.toUpperCase() === id || v.vehicleNumber.toUpperCase() === id))
   if (unknown.length) return { text: `${[...new Set(unknown)].join(', ')} ${unknown.length === 1 ? 'is' : 'are'} not in the current SPLRT fleet records. I cannot assess maintenance needs for an unknown vehicle. Please check the vehicle number.`, plan: null, batch: null, audit: [{ tool: 'vehicle_guard', outcome: 'unknown_vehicle' }], usage: { input_tokens: 0, output_tokens: 0 }, planningPreferences }
   const input = [
+    ...(sourceScope ? [{ role: 'developer', content: `This follow-up refers only to bookings occupying source bay ${sourceScope.bayId} on ${sourceScope.date}. Select only those current source bookings for rescheduling. Destination bays are separate from this source filter. Do not select other vehicles.` }] : []),
     { role: 'developer', content: SYSTEM_PROMPT },
     { role: 'developer', content: `Current Singapore date: ${new Date(now.getTime() + 8 * 3600000).toISOString().slice(0, 10)}. Pending proposal: ${pendingBatch ? pendingBatch.id : 'none'}. History is conversation only; refresh facts with tools.` },
     ...(planningPreferences ? [{ role: 'developer', content: `Last validated planning preferences (retain unless the operator changes them; revalidate dates): ${JSON.stringify(planningPreferences)}. These are preferences, not permission to schedule.` }] : []),
@@ -146,8 +153,13 @@ export async function runAssistantTurn({ message, history = [], loadData, savePr
           if (!rescheduling) validatedPreferences = validateConstraints(args, now)
           // Re-read on every preview/write: prior conversational data never authorizes a write.
           data = await loadData()
+          if (sourceScope) {
+            if (!rescheduling) throw new Error('Clearing this bay requires moving its existing bookings, not creating new work.')
+            validateSourceBay(data, args, sourceScope)
+          }
           plan = rescheduling ? buildReschedulePlan(data, args, now) : buildAssistantPlan(data, args, now)
-          if (rescheduling) validatedPreferences = { kind: 'reschedule', ...args }
+          if (sourceScope && plan.bookings.some(booking => booking.bayId === sourceScope.bayId && Date.parse(booking.startAt) < Date.parse(`${sourceScope.date}T00:00:00+08:00`) + 86400000 && Date.parse(booking.endAt) > Date.parse(`${sourceScope.date}T00:00:00+08:00`))) throw new Error('These moves would still occupy the bay on the requested clearance date. Choose another bay or date.')
+          if (rescheduling) validatedPreferences = { kind: 'reschedule', ...args, ...(sourceScope ? { sourceScope } : {}) }
           if (call.name.startsWith('propose_')) {
             if (!canPropose || batch || pendingBatch) throw new Error('A proposal is already pending, or scheduling was not explicitly requested.')
             if (plan.bookings.length) { writeAttempted = true; batch = await saveProposal(plan, args) }
