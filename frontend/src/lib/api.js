@@ -26,7 +26,7 @@ export async function loadFleetOverview() {
 
 export async function loadVehicleDetail(lrvId) {
   const db = client()
-  const [summary, forecasts, traversals, anchors, events, bookings, rules] = await Promise.all([
+  const [summary, forecasts, traversals, anchors, events, bookings, rules, observations] = await Promise.all([
     result(db.from('vehicle_mileage_summary').select('*').eq('lrv_id', lrvId).limit(1), 'Vehicle summary'),
     result(db.from('cycle_forecasts').select('*').eq('lrv_id', lrvId).order('cycle_type'), 'Maintenance cycles'),
     result(db.from('segment_traversals').select('*').eq('lrv_id', lrvId).order('ts', { ascending: false }).limit(5000), 'Segment activity'),
@@ -34,8 +34,10 @@ export async function loadVehicleDetail(lrvId) {
     result(db.from('maintenance_events').select('*').eq('lrv_id', lrvId).order('completed_at', { ascending: false }).limit(30), 'Maintenance log'),
     result(db.from('maintenance_bookings').select('*').eq('lrv_id', lrvId).order('start_at'), 'Depot visits'),
     result(db.from('maintenance_cycle_rules').select('*').eq('fleet', 'splrt').order('cycle_type'), 'Maintenance rules'),
+    result(db.from('technician_observations').select('maintenance_event_id,image_uri').eq('lrv_id', lrvId).order('captured_at'), 'Maintenance photos'),
   ])
-  return { summary: summary[0] || null, forecasts, traversals, anchors, events, bookings, rules }
+  const photos = new Map(observations.map(row => [row.maintenance_event_id, row.image_uri]))
+  return { summary: summary[0] || null, forecasts, traversals, anchors, events: events.map(event => ({ ...event, imageUri: photos.get(event.id) || null })), bookings, rules }
 }
 
 export async function loadMaintenancePlanning() {
@@ -261,4 +263,12 @@ export async function saveBay(bay) {
     opens_at: bay.opens_at, closes_at: bay.closes_at, active: Boolean(bay.active),
   }).eq('bay_id', bay.bay_id).eq('fleet', 'splrt')
   if (error) throw new Error(error.message)
+}
+
+export async function loadMaintenancePhoto(imageUri) {
+  const prefix = 'hubometer-evidence/'
+  if (!imageUri?.startsWith(prefix) || !imageUri.slice(prefix.length)) throw new Error('This record has no valid photo reference.')
+  const { data, error } = await client().storage.from('hubometer-evidence').createSignedUrl(imageUri.slice(prefix.length), 300)
+  if (error) throw new Error('The maintenance photo could not be loaded. Please try again.')
+  return data.signedUrl
 }

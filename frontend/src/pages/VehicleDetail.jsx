@@ -3,17 +3,20 @@ import { loadVehicleDetail } from '../lib/api'
 import { cycleLabel, forecastLabel, formatDateTime, formatDateTimeRange, formatDuration, formatKm, qualityLabel, statusLabel, vehicleLabel } from '../lib/format'
 import { useSupabaseData } from '../hooks/useSupabaseData'
 import { Badge, Card, DataBoundary, MetricCard, PageHeader, Progress } from '../components/UI'
+import { MaintenancePhoto } from '../components/MaintenancePhoto'
 import { Icon } from '../components/Icons'
 
 const routeSegments = ['SIM_SK_A_B', 'SIM_SK_B_C', 'SIM_SK_C_D', 'SIM_SK_D_E', 'SIM_SK_E_F', 'SIM_SK_F_A']
 
 export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
   const [tab, setTab] = useState('trend')
+  const [photo, setPhoto] = useState(null)
   const subscriptions = useMemo(() => [
     { table: 'vehicles', filter: `lrv_id=eq.${lrvId}` },
     { table: 'segment_traversals', event: 'INSERT', filter: `lrv_id=eq.${lrvId}` },
     { table: 'mileage_anchors', event: 'INSERT', filter: `lrv_id=eq.${lrvId}` },
     { table: 'cycle_state', filter: `lrv_id=eq.${lrvId}` },
+    { table: 'technician_observations', filter: `lrv_id=eq.${lrvId}` },
     { table: 'maintenance_events', filter: `lrv_id=eq.${lrvId}` },
     { table: 'maintenance_bookings', filter: `lrv_id=eq.${lrvId}` },
     { table: 'maintenance_cycle_rules' },
@@ -64,17 +67,18 @@ export function VehicleDetail({ lrvId, navigate, reportUpdatedAt }) {
 
         <Card title="Recent activity" eyebrow="Completed segment traversals" className="activity-card">
           {data.traversals.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Segment</th><th>Direction</th><th>Distance</th><th>Device mileage</th><th>GNSS quality</th></tr></thead><tbody>
-            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong>{event.seg_id}</strong></td><td>{event.dir || '—'}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` · ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
+            {data.traversals.slice(0, 12).map((event) => { const quality = qualityLabel(event.hdop); return <tr key={event.id}><td>{formatDateTime(event.ts)}</td><td><strong>{event.seg_id}</strong></td><td>{event.dir || 'â€”'}</td><td>{formatKm(Number(event.length_m) / 1000, 2)}</td><td>{formatKm(event.odo_km, 1)}</td><td><Badge value={`${quality.label}${event.hdop ? ` Â· ${Number(event.hdop).toFixed(1)}` : ''}`} tone={quality.tone}/></td></tr> })}
           </tbody></table></div> : <p className="empty-copy">No completed segments have been received for this vehicle.</p>}
         </Card>
 
         <Card title="Maintenance log" eyebrow="Technician-confirmed work and definite completion mileage">
-          {data.events.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Planned package</th><th>Physical reading</th><th>Actually completed</th><th>Result</th><th>Technician</th><th>Notes</th></tr></thead><tbody>
-            {data.events.map((event) => { const corrective = event.work_type === 'corrective'; const planned = corrective ? [] : data.rules.find((rule) => Number(rule.cycle_type) === Number(event.primary_cycle))?.included_cycles || [event.primary_cycle]; const completed = event.reset_cycles || []; const partial = !corrective && planned.some((cycle) => !completed.map(Number).includes(Number(cycle))); return <tr key={event.id}><td>{formatDateTime(event.completed_at)}</td><td><strong>{corrective ? 'Corrective repair' : cycleLabel(event.primary_cycle)}</strong></td><td>{formatKm(event.completion_mileage_km, 1)}</td><td>{corrective ? 'No mileage reset' : completed.map(cycleLabel).join(' · ')}</td><td><Badge value={partial ? 'Partial scope' : 'Completed'} tone={partial ? 'warning' : 'success'}/></td><td>{event.technician_id}</td><td>{event.notes || statusLabel(event.source)}</td></tr> })}
+          {data.events.length ? <div className="table-wrap"><table><thead><tr><th>Completed</th><th>Planned package</th><th>Physical reading</th><th>Actually completed</th><th>Result</th><th>Technician</th><th>Notes</th><th>Photo</th></tr></thead><tbody>
+            {data.events.map((event) => { const corrective = event.work_type === 'corrective'; const planned = corrective ? [] : data.rules.find((rule) => Number(rule.cycle_type) === Number(event.primary_cycle))?.included_cycles || [event.primary_cycle]; const completed = event.reset_cycles || []; const partial = !corrective && planned.some((cycle) => !completed.map(Number).includes(Number(cycle))); return <tr key={event.id}><td>{formatDateTime(event.completed_at)}</td><td><strong>{corrective ? 'Corrective repair' : cycleLabel(event.primary_cycle)}</strong></td><td>{formatKm(event.completion_mileage_km, 1)}</td><td>{corrective ? 'No mileage reset' : completed.map(cycleLabel).join(' Â· ')}</td><td><Badge value={partial ? 'Partial scope' : 'Completed'} tone={partial ? 'warning' : 'success'}/></td><td>{event.technician_id}</td><td>{event.notes || statusLabel(event.source)}</td><td>{event.imageUri ? <button className="button button-secondary button-compact" onClick={() => setPhoto(event)}><Icon name="camera"/>View image</button> : '—'}</td></tr> })}
           </tbody></table></div> : <p className="empty-copy">No completed maintenance has been recorded.</p>}
         </Card>
       </>}
     </DataBoundary>
+    {photo && <MaintenancePhoto key={photo.id} record={photo} onClose={() => setPhoto(null)}/>}
   </>
 }
 
@@ -99,5 +103,5 @@ function RoutePosition({ current, direction }) {
     return <div className="route-map"><p className="empty-copy">The latest segment is <strong>{current}</strong>. Route geometry has not been loaded for this track dataset, so the dashboard will not guess a position.</p></div>
   }
   const directionLabel = { E: 'Eastbound', W: 'Westbound', N: 'Northbound', S: 'Southbound' }[direction] || 'Direction unavailable'
-  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' → ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
+  return <div className="route-map"><div className="loop-line">{routeSegments.map((segment, index) => <div className={`route-stop ${index === activeIndex ? 'active' : ''}`} key={segment}><span>{index === activeIndex ? <Icon name="train" size={16}/> : index + 1}</span><small>{segment.replace('SIM_SK_', '').replaceAll('_', ' â†’ ')}</small></div>)}</div><p><Badge value={directionLabel} tone="info"/> Last completed segment: <strong>{current || 'No position'}</strong></p></div>
 }
