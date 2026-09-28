@@ -81,3 +81,126 @@ main:has(.fleet-page),main:has(.maintenance-page){padding-bottom:8px}
 
 .maintenance-photo-dialog{padding:0;border:0;border-radius:12px;width:min(780px,90vw);max-height:90dvh;color:var(--ink);background:white}.maintenance-photo-dialog::backdrop{background:rgba(7,18,35,.6)}.maintenance-photo-content{padding:20px 24px}.maintenance-photo-content>p{margin:0 0 16px;color:var(--muted)}.maintenance-photo-content img{display:block;width:100%;max-height:65dvh;object-fit:contain}
 
+/* Keep the primary planning pages inside a desktop viewport. Data-heavy tables
+   and queues retain their own card-level scrolling. */
+@media (min-width: 1201px) {
+  html:has(.fleet-page),
+  html:has(.maintenance-page),
+  body:has(.fleet-page),
+  body:has(.maintenance-page),
+  #root:has(.fleet-page),
+  #root:has(.maintenance-page) {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .workspace:has(.fleet-page),
+  .workspace:has(.maintenance-page) {
+    height: 100dvh;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .workspace:has(.fleet-page) > main,
+  .workspace:has(.maintenance-page) > main {
+    width: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+    padding: 18px 32px 14px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .fleet-page,
+  .maintenance-page {
+    width: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .fleet-page {
+    display: grid;
+    grid-template-rows: auto auto minmax(170px, .72fr) minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .fleet-page .page-header,
+  .fleet-page .metric-grid,
+  .fleet-page > .card,
+  .fleet-page .overview-grid,
+  .maintenance-page .page-header,
+  .maintenance-page > .metric-grid,
+  .maintenance-page .maintenance-planning-grid {
+    margin: 0;
+  }
+
+  .fleet-page > .card,
+  .fleet-page .overview-grid > .card,
+  .maintenance-planning-grid > .card {
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .fleet-page > .card .card-body,
+  .fleet-page .overview-grid > .card .card-body,
+  .maintenance-planning-grid > .card > .card-body {
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  .fleet-page .overview-grid {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1.8fr) minmax(310px, .8fr);
+    gap: 14px;
+  }
+
+  .fleet-page .priority-table-scroll {
+    height: 100%;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .fleet-page .outlook-axis-label,
+  .fleet-page .outlook-scale,
+  .fleet-page .bar-area {
+    height: clamp(66px, 9.3dvh, 100px);
+  }
+
+  .fleet-page .outlook {
+    height: auto;
+    min-height: 0;
+  }
+
+  .maintenance-page {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .maintenance-planning-grid {
+    height: 100%;
+    min-height: 0;
+    grid-template-columns: minmax(0, 4fr) minmax(300px, 1.05fr);
+    gap: 16px;
+  }
+
+  .maintenance-planning-grid > .card {
+    margin-bottom: 0;
+  }
+
+  .maintenance-priority-card-wrap .card-body {
+    max-height: none;
+    overflow-y: auto;
+  }
+
+  .schedule-card .card-body {
+    min-width: 0;
+  }
+}
+
